@@ -184,16 +184,16 @@ def forward_pass(data, policy):
         rgb_data, tactile_data, qpos_data, action_data, is_pad = data
         
         # Debug: Print shapes to understand data structure
-        print(f"DEBUG: rgb_data type={type(rgb_data)}, shape={rgb_data.shape if isinstance(rgb_data, torch.Tensor) else 'N/A'}")
-        print(f"DEBUG: tactile_data type={type(tactile_data)}, len={len(tactile_data) if isinstance(tactile_data, list) else 'N/A'}")
-        if isinstance(tactile_data, list) and len(tactile_data) > 0:
-            print(f"DEBUG: tactile_data[0] type={type(tactile_data[0])}")
-            if isinstance(tactile_data[0], torch.Tensor):
-                print(f"DEBUG: tactile_data[0] shape={tactile_data[0].shape}")
-            elif isinstance(tactile_data[0], list):
-                print(f"DEBUG: tactile_data[0] is list, len={len(tactile_data[0])}")
-                if len(tactile_data[0]) > 0:
-                    print(f"DEBUG: tactile_data[0][0] type={type(tactile_data[0][0])}, shape={tactile_data[0][0].shape if isinstance(tactile_data[0][0], torch.Tensor) else 'N/A'}")
+        # print(f"DEBUG: rgb_data type={type(rgb_data)}, shape={rgb_data.shape if isinstance(rgb_data, torch.Tensor) else 'N/A'}")
+        # print(f"DEBUG: tactile_data type={type(tactile_data)}, len={len(tactile_data) if isinstance(tactile_data, list) else 'N/A'}")
+        # if isinstance(tactile_data, list) and len(tactile_data) > 0:
+        #     print(f"DEBUG: tactile_data[0] type={type(tactile_data[0])}")
+        #     if isinstance(tactile_data[0], torch.Tensor):
+        #         print(f"DEBUG: tactile_data[0] shape={tactile_data[0].shape}")
+        #     elif isinstance(tactile_data[0], list):
+        #         print(f"DEBUG: tactile_data[0] is list, len={len(tactile_data[0])}")
+        #         if len(tactile_data[0]) > 0:
+        #             print(f"DEBUG: tactile_data[0][0] type={type(tactile_data[0][0])}, shape={tactile_data[0][0].shape if isinstance(tactile_data[0][0], torch.Tensor) else 'N/A'}")
         
         # Handle tactile_data: could be tensor or list depending on batching
         if isinstance(tactile_data, torch.Tensor):
@@ -212,22 +212,22 @@ def forward_pass(data, policy):
                 # Each element is (batch, C, H, W), need to add camera dimension
                 # Stack along camera dimension: list of (B,C,H,W) -> (B, num_tactile, C, H, W)
                 tactile_stacked = torch.stack(tactile_data, dim=1)  # Stack along dim=1 (camera dim)
-                print(f"DEBUG: tactile_stacked shape after stack(dim=1)={tactile_stacked.shape}")
+                # print(f"DEBUG: tactile_stacked shape after stack(dim=1)={tactile_stacked.shape}")
             elif isinstance(tactile_data[0], list):
                 # List of lists: (batch) of (num_tactile) of (C, H, W)
                 tactile_stacked = torch.stack([torch.stack(batch_tactile) for batch_tactile in tactile_data])
-                print(f"DEBUG: tactile_stacked shape after list-of-lists={tactile_stacked.shape}")
+                # print(f"DEBUG: tactile_stacked shape after list-of-lists={tactile_stacked.shape}")
             else:
                 # List of per-sample tensors: (batch) of (C, H, W)
                 tactile_stacked = torch.stack(tactile_data)  # (batch, C, H, W)
-                print(f"DEBUG: tactile_stacked shape after stack={tactile_stacked.shape}")
+                # print(f"DEBUG: tactile_stacked shape after stack={tactile_stacked.shape}")
                 tactile_stacked = tactile_stacked.unsqueeze(1)  # (batch, 1, C, H, W)
-                print(f"DEBUG: tactile_stacked shape after unsqueeze={tactile_stacked.shape}")
+                # print(f"DEBUG: tactile_stacked shape after unsqueeze={tactile_stacked.shape}")
             
             # Can't concatenate due to different spatial sizes (480x640 vs 224x224)
             # Pass as list instead - model will handle separately
             image_data = [rgb_data, tactile_stacked]
-            print(f"DEBUG: Passing image_data as list: RGB={rgb_data.shape}, Tactile={tactile_stacked.shape}")
+            # print(f"DEBUG: Passing image_data as list: RGB={rgb_data.shape}, Tactile={tactile_stacked.shape}")
         else:
             # No tactile data
             image_data = rgb_data

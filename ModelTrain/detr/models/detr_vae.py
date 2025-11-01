@@ -208,16 +208,18 @@ class DETRVAE(nn.Module):
                 features = features[0]  # take the last layer feature (B, C, H, W)
                 pos = pos[0]
                 
-                print(f"DEBUG cam {cam_id}: features.shape={features.shape}, pos.shape={pos.shape}")
+                #print(f"DEBUG cam {cam_id}: features.shape={features.shape}, pos.shape={pos.shape}")
                 
-                # Project features (keep 4D format for concatenation along width)
+                # Project and flatten to sequence
                 projected = self.input_proj(features)  # (B, hidden_dim, H, W)
+                projected = projected.flatten(2)  # (B, hidden_dim, H*W) - flatten spatial
                 all_features.append(projected)
-                print(f"DEBUG cam {cam_id}: projected.shape={projected.shape}")
+                #print(f"DEBUG cam {cam_id}: projected.shape after flatten={projected.shape}")
                 
-                # Keep position embeddings as 4D
+                # Flatten position embeddings
+                pos = pos.flatten(2)  # (1, hidden_dim, H*W)
                 all_pos.append(pos)
-                print(f"DEBUG cam {cam_id}: pos.shape={pos.shape}")
+                #print(f"DEBUG cam {cam_id}: pos.shape after flatten={pos.shape}")
             
             # Process tactile sensors through ViTG (shared encoder)
             for tac_id, tac_name in enumerate(self.tactile_camera_names):
@@ -225,27 +227,37 @@ class DETRVAE(nn.Module):
                 
                 # Get ViTG embedding using shared encoder
                 tac_embedding = self.vitg_encoder_shared(tactile_image)  # (B, 1408)
-                print(f"DEBUG tactile {tac_id}: tac_embedding.shape={tac_embedding.shape}")
+                #print(f"DEBUG tactile {tac_id}: tac_embedding.shape={tac_embedding.shape}")
                 
                 # Project to hidden_dim
                 tac_feature = self.vitg_proj(tac_embedding)  # (B, hidden_dim)
                 
-                # Reshape to spatial format: (B, hidden_dim, 1, 1) to match ResNet 4D format
-                tac_feature = tac_feature.unsqueeze(-1).unsqueeze(-1)  # (B, hidden_dim, 1, 1)
+                # Reshape to sequence format: (B, hidden_dim, 1) to match flattened RGB
+                tac_feature = tac_feature.unsqueeze(-1)  # (B, hidden_dim, 1) - single token
                 all_features.append(tac_feature)
-                print(f"DEBUG tactile {tac_id}: tac_feature.shape after unsqueeze={tac_feature.shape}")
+                #print(f"DEBUG tactile {tac_id}: tac_feature.shape={tac_feature.shape}")
                 
-                # Add learned position embedding (reshape to 4D: 1, hidden_dim, 1, 1)
-                tac_pos = self.tactile_pos_embed.unsqueeze(-1)  # (1, hidden_dim, 1, 1)
+                # Position embedding as sequence: (1, hidden_dim, 1)
+                tac_pos = self.tactile_pos_embed  # (1, hidden_dim, 1) - already correct shape
                 all_pos.append(tac_pos)
-                print(f"DEBUG tactile {tac_id}: tac_pos.shape={tac_pos.shape}")
+                #print(f"DEBUG tactile {tac_id}: tac_pos.shape={tac_pos.shape}")
             
-            # Concatenate all features along width dimension (like ResNet-only mode)
-            # RGB: (B, hidden_dim, H, W), Tactile: (B, hidden_dim, 1, 1)
-            src = torch.cat(all_features, dim=3)  # Concatenate along width: (B, hidden_dim, H, W_total)
-            pos = torch.cat(all_pos, dim=3)  # (1, hidden_dim, H, W_total)
+            # Concatenate all features along sequence dimension
+            # RGB: (B, hidden_dim, 300) per camera × 3 = 900 tokens
+            # Tactile: (B, hidden_dim, 1) per sensor × 1 = 1 token
+            # Total: 901 tokens in unified sequence
+            src = torch.cat(all_features, dim=2)  # (B, hidden_dim, total_seq_len=901)
+            pos = torch.cat(all_pos, dim=2)  # (1, hidden_dim, total_seq_len=901)
             
-            print(f"DEBUG: src.shape after cat={src.shape}, pos.shape after cat={pos.shape}")
+            #print(f"DEBUG: src.shape after cat={src.shape}, pos.shape after cat={pos.shape}")
+            
+            # Reshape to 4D for transformer (it expects (B, C, H, W) format)
+            # Treat sequence as width dimension: (B, hidden_dim, 1, seq_len)
+            src = src.unsqueeze(2)  # (B, hidden_dim, 1, 901)
+            pos = pos.unsqueeze(2)  # (1, hidden_dim, 1, 901)
+            
+            #print(f"DEBUG: Final 4D format - src={src.shape}, pos={pos.shape}")
+            #print(f"DEBUG: Expected: src=(B, C, H, W)=(8, 512, 1, 901), pos=(1, 512, 1, 901)")
             
             # Proprioception and transformer
             proprio_input = self.input_proj_robot_state(qpos)
