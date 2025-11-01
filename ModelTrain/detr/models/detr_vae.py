@@ -34,7 +34,7 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 
 class DETRVAE(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, vq, vq_class, vq_dim, action_dim, use_vitg=False, vitg_ckpt_path=None, tactile_camera_names=None):
+    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, vq, vq_class, vq_dim, action_dim):
         """ Initializes the model.
         Parameters:
             backbones: torch module of the backbone to be used. See backbone.py
@@ -43,51 +43,20 @@ class DETRVAE(nn.Module):
             num_queries: number of object queries, ie detection slot. This is the maximal number of objects
                          DETR can detect in a single image. For COCO, we recommend 100 queries.
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
-            use_vitg: whether to use ViTG encoder for tactile images
-            vitg_ckpt_path: path to ViTG checkpoint file
-            tactile_camera_names: list of tactile sensor names for ViTG (hybrid mode)
         """
         super().__init__()
         self.num_queries = num_queries
-        self.camera_names = camera_names  # RGB cameras
-        self.tactile_camera_names = tactile_camera_names if tactile_camera_names else []
-        self.all_camera_names = camera_names + self.tactile_camera_names
+        self.camera_names = camera_names
         self.transformer = transformer
         self.encoder = encoder
         self.vq, self.vq_class, self.vq_dim = vq, vq_class, vq_dim
         self.state_dim, self.action_dim = state_dim, action_dim
-        self.use_vitg = use_vitg
-        self.use_hybrid = use_vitg and len(self.tactile_camera_names) > 0 and backbones is not None
         hidden_dim = transformer.d_model
         self.action_head = nn.Linear(hidden_dim, action_dim)
         self.is_pad_head = nn.Linear(hidden_dim, 1)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         
-        if self.use_hybrid:
-            # Hybrid mode: ResNet backbones for RGB + ViTG for tactile
-            print(f"Using HYBRID mode: ResNet for {len(camera_names)} RGB cameras + ViTG for {len(self.tactile_camera_names)} tactile sensors")
-            
-            # Create ResNet backbones for RGB cameras
-            self.backbones = nn.ModuleList(backbones)
-            self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
-            
-            # Create ViTG encoder for tactile sensors (shared across all tactile sensors)
-            from ModelTrain.module.vitg_encoder import ViTGEncoderSimple
-            print(f"Loading ViTG from: {vitg_ckpt_path}")
-            # Load once and share across all tactile sensors to save memory
-            # ViT-Giant outputs 1408-dim embeddings
-            self.vitg_encoder_shared = ViTGEncoderSimple(vitg_ckpt_path, embed_dim=1408, input_size=224)
-            
-            # Project ViTG embeddings (1408-dim) to hidden_dim
-            self.vitg_proj = nn.Linear(1408, hidden_dim)
-            
-            # Position embedding for tactile features
-            self.tactile_pos_embed = nn.Parameter(torch.randn(1, hidden_dim, 1))
-            
-            self.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)
-            
-            
-        elif backbones is not None:
+        if backbones is not None:
             # Pure ResNet mode (RGB only)
             self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
             self.backbones = nn.ModuleList(backbones)
@@ -186,118 +155,7 @@ class DETRVAE(nn.Module):
         latent_input, probs, binaries, mu, logvar = self.encode(qpos, actions, is_pad, vq_sample)
 
         # cvae decoder
-        if self.use_hybrid:
-            # Hybrid mode: Process RGB through ResNet + Tactile through ViTG
-            bs = qpos.shape[0]
-            all_features = []
-            all_pos = []
-            
-            # Handle list input (for different resolutions) or tensor input
-            if isinstance(image, list):
-                rgb_images = image[0]  # (B, num_rgb, C, H, W)
-                tactile_images = image[1]  # (B, num_tactile, C, H, W)
-            else:
-                # Single tensor input (same resolution for all)
-                rgb_images = image[:, :len(self.camera_names)]
-                tactile_images = image[:, len(self.camera_names):]
-            
-            # Process RGB cameras through ResNet
-            for cam_id, cam_name in enumerate(self.camera_names):
-                rgb_image = rgb_images[:, cam_id]
-                features, pos = self.backbones[cam_id](rgb_image)
-                features = features[0]  # take the last layer feature (B, C, H, W)
-                pos = pos[0]
-                
-                #print(f"DEBUG cam {cam_id}: features.shape={features.shape}, pos.shape={pos.shape}")
-                
-                # Project and flatten to sequence
-                projected = self.input_proj(features)  # (B, hidden_dim, H, W)
-                projected = projected.flatten(2)  # (B, hidden_dim, H*W) - flatten spatial
-                all_features.append(projected)
-                #print(f"DEBUG cam {cam_id}: projected.shape after flatten={projected.shape}")
-                
-                # Flatten position embeddings
-                pos = pos.flatten(2)  # (1, hidden_dim, H*W)
-                all_pos.append(pos)
-                #print(f"DEBUG cam {cam_id}: pos.shape after flatten={pos.shape}")
-            
-            # Process tactile sensors through ViTG (shared encoder)
-            for tac_id, tac_name in enumerate(self.tactile_camera_names):
-                tactile_image = tactile_images[:, tac_id]
-                
-                # Get ViTG embedding using shared encoder
-                tac_embedding = self.vitg_encoder_shared(tactile_image)  # (B, 1408)
-                #print(f"DEBUG tactile {tac_id}: tac_embedding.shape={tac_embedding.shape}")
-                
-                # Project to hidden_dim
-                tac_feature = self.vitg_proj(tac_embedding)  # (B, hidden_dim)
-                
-                # Reshape to sequence format: (B, hidden_dim, 1) to match flattened RGB
-                tac_feature = tac_feature.unsqueeze(-1)  # (B, hidden_dim, 1) - single token
-                all_features.append(tac_feature)
-                #print(f"DEBUG tactile {tac_id}: tac_feature.shape={tac_feature.shape}")
-                
-                # Position embedding as sequence: (1, hidden_dim, 1)
-                tac_pos = self.tactile_pos_embed  # (1, hidden_dim, 1) - already correct shape
-                all_pos.append(tac_pos)
-                #print(f"DEBUG tactile {tac_id}: tac_pos.shape={tac_pos.shape}")
-            
-            # Concatenate all features along sequence dimension
-            # RGB: (B, hidden_dim, 300) per camera × 3 = 900 tokens
-            # Tactile: (B, hidden_dim, 1) per sensor × 1 = 1 token
-            # Total: 901 tokens in unified sequence
-            src = torch.cat(all_features, dim=2)  # (B, hidden_dim, total_seq_len=901)
-            pos = torch.cat(all_pos, dim=2)  # (1, hidden_dim, total_seq_len=901)
-            
-            #print(f"DEBUG: src.shape after cat={src.shape}, pos.shape after cat={pos.shape}")
-            
-            # Reshape to 4D for transformer (it expects (B, C, H, W) format)
-            # Treat sequence as width dimension: (B, hidden_dim, 1, seq_len)
-            src = src.unsqueeze(2)  # (B, hidden_dim, 1, 901)
-            pos = pos.unsqueeze(2)  # (1, hidden_dim, 1, 901)
-            
-            #print(f"DEBUG: Final 4D format - src={src.shape}, pos={pos.shape}")
-            #print(f"DEBUG: Expected: src=(B, C, H, W)=(8, 512, 1, 901), pos=(1, 512, 1, 901)")
-            
-            # Proprioception and transformer
-            proprio_input = self.input_proj_robot_state(qpos)
-            hs = self.transformer(src, None, self.query_embed.weight, pos, latent_input, proprio_input, self.additional_pos_embed.weight)[0]
-            
-        elif self.use_vitg:
-            # Pure ViTG mode: Process tactile images through ViTG encoders
-            bs = qpos.shape[0]
-            all_tactile_features = []
-            
-            for cam_id, cam_name in enumerate(self.camera_names):
-                # Get tactile image for this sensor
-                tactile_image = image[:, cam_id]  # (B, C, H, W)
-                
-                # Pass through ViTG encoder to get global embedding
-                tactile_embedding = self.vitg_encoders[cam_id](tactile_image)  # (B, 1280)
-                
-                # Project to hidden_dim
-                tactile_feature = self.vitg_proj(tactile_embedding)  # (B, hidden_dim)
-                
-                # Reshape to add a spatial dimension: (B, hidden_dim, 1)
-                tactile_feature = tactile_feature.unsqueeze(-1)  # (B, hidden_dim, 1)
-                
-                all_tactile_features.append(tactile_feature)
-            
-            # Concatenate tactile features along width dimension
-            # This treats each tactile sensor as a "spatial location"
-            src = torch.cat(all_tactile_features, dim=2)  # (B, hidden_dim, num_sensors)
-            
-            # Create position embeddings for tactile sensors
-            pos = self.tactile_pos_embed.repeat(1, 1, len(self.camera_names))  # (1, hidden_dim, num_sensors)
-            pos = pos.repeat(bs, 1, 1)  # (B, hidden_dim, num_sensors)
-            
-            # proprioception features
-            proprio_input = self.input_proj_robot_state(qpos)
-            
-            # Pass through transformer
-            hs = self.transformer(src, None, self.query_embed.weight, pos, latent_input, proprio_input, self.additional_pos_embed.weight)[0]
-            
-        elif self.backbones is not None:
+        if self.backbones is not None:
             # Pure ResNet mode: Image observation features and position embeddings
             all_cam_features = []
             all_cam_pos = []
@@ -414,36 +272,13 @@ def build_encoder(args):
 def build(args):
     state_dim = 14 # TODO hardcode
 
-    # Check if using ViTG
-    use_vitg = getattr(args, 'use_vitg', False)
-    vitg_ckpt_path = getattr(args, 'vitg_ckpt_path', None)
-    tactile_camera_names = getattr(args, 'tactile_camera_names', [])
-
     # From state
     # backbone = None # from state for now, no need for conv nets
     # From image
-    if use_vitg and len(tactile_camera_names) > 0:
-        # Hybrid mode: Build ResNet backbones for RGB cameras only (not tactile)
-        backbones = []
-        for cam_name in args.camera_names:
-            if cam_name not in tactile_camera_names:
-                backbone = build_backbone(args)
-                backbones.append(backbone)
-        
-        if len(backbones) == 0:
-            backbones = None  # Pure ViTG mode (no RGB cameras)
-        
-        print(f"Building HYBRID model: {len(backbones) if backbones else 0} ResNet backbones + {len(tactile_camera_names)} ViTG encoders")
-    elif use_vitg:
-        # Pure ViTG mode: all cameras are tactile
-        backbones = None
-        print("Building model with ViTG encoders only (no ResNet backbones)")
-    else:
-        # Pure ResNet mode: all cameras use ResNet
-        backbones = []
-        for _ in args.camera_names:
-            backbone = build_backbone(args)
-            backbones.append(backbone)
+    backbones = []
+    for _ in args.camera_names:
+        backbone = build_backbone(args)
+        backbones.append(backbone)
 
     transformer = build_transformer(args)
 
@@ -464,9 +299,6 @@ def build(args):
         vq_class=args.vq_class,
         vq_dim=args.vq_dim,
         action_dim=args.action_dim,
-        use_vitg=use_vitg,
-        vitg_ckpt_path=vitg_ckpt_path,
-        tactile_camera_names=tactile_camera_names,
     )
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

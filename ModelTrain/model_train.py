@@ -33,8 +33,13 @@ def arg_config():
     parser.add_argument('--temporal_agg', action='store_true', default=True)
     parser.add_argument('--no_encoder', action='store_true', default=False)
     
-    # ViTG-related arguments
-    parser.add_argument('--use_vitg', action='store_true', default=False, help='Use ViTG encoder for tactile images instead of ResNet')
+    # Policy class selection
+    parser.add_argument('--policy_class', action='store', type=str, default='ACT', 
+                        choices=['ACT', 'ACTJEPA', 'CNNMLP', 'Diffusion'],
+                        help='Policy class to use (ACT for standard, ACTJEPA for hybrid RGB+tactile)')
+    
+    # ViTG-related arguments (used by ACTJEPA)
+    parser.add_argument('--use_vitg', action='store_true', default=False, help='Use ViTG encoder for tactile images (deprecated, use --policy_class ACTJEPA instead)')
     parser.add_argument('--vitg_ckpt_path', action='store', type=str, help='Path to ViTG checkpoint file (.pt)', required=False)
 
     return vars(parser.parse_args())

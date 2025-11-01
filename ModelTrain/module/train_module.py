@@ -30,7 +30,7 @@ def get_auto_index(dataset_dir):
 def train(args):
     set_seed(1)
     ckpt_dir = args["ckpt_dir"]
-    policy_class = "ACT"
+    policy_class = args.get("policy_class", "ACT")
     task_name = args["task_name"]
     batch_size_train = args["batch_size"]
     batch_size_val = args["batch_size"]
@@ -66,13 +66,32 @@ def train(args):
          'dec_layers':dec_layers, 
          'nheads':nheads, 
          'camera_names':camera_names, 
+         'vq':False, 
+         'vq_class':None, 
+         'vq_dim':None, 
+         'action_dim':16, 
+         'no_encoder':args["no_encoder"]}
+    elif policy_class == "ACTJEPA":
+        enc_layers = 4
+        dec_layers = 7
+        nheads = 8
+        policy_config = {'lr':args["lr"],  'num_queries':args["chunk_size"], 
+         'kl_weight':args["kl_weight"], 
+         'hidden_dim':args["hidden_dim"], 
+         'dim_feedforward':args["dim_feedforward"], 
+         'lr_backbone':lr_backbone, 
+         'backbone':backbone, 
+         'enc_layers':enc_layers, 
+         'dec_layers':dec_layers, 
+         'nheads':nheads, 
+         'camera_names':camera_names, 
          'tactile_camera_names':tactile_camera_names,
          'vq':False, 
          'vq_class':None, 
          'vq_dim':None, 
          'action_dim':16, 
          'no_encoder':args["no_encoder"],
-         'use_vitg':args.get("use_vitg", False),
+         'use_vitg':True,
          'vitg_ckpt_path':args.get("vitg_ckpt_path", None)}
     else:
         if policy_class == "Diffusion":
@@ -130,28 +149,29 @@ def train(args):
 def make_policy(policy_class, policy_config):
     if policy_class == "ACT":
         policy = ACTPolicy(policy_config)
+    elif policy_class == "ACTJEPA":
+        from ModelTrain.module.policy_jepa import ACTJEPAPolicy
+        policy = ACTJEPAPolicy(policy_config)
+    elif policy_class == "CNNMLP":
+        policy = CNNMLPPolicy(policy_config)
+    elif policy_class == "Diffusion":
+        policy = DiffusionPolicy(policy_config)
     else:
-        if policy_class == "CNNMLP":
-            policy = CNNMLPPolicy(policy_config)
-        else:
-            if policy_class == "Diffusion":
-                policy = DiffusionPolicy(policy_config)
-            else:
-                raise NotImplementedError
+        raise NotImplementedError
     return policy
 
 
 def make_optimizer(policy_class, policy):
     if policy_class == "ACT":
         optimizer = policy.configure_optimizers()
+    elif policy_class == "ACTJEPA":
+        optimizer = policy.configure_optimizers()
+    elif policy_class == "CNNMLP":
+        optimizer = policy.configure_optimizers()
+    elif policy_class == "Diffusion":
+        optimizer = policy.configure_optimizers()
     else:
-        if policy_class == "CNNMLP":
-            optimizer = policy.configure_optimizers()
-        else:
-            if policy_class == "Diffusion":
-                optimizer = policy.configure_optimizers()
-            else:
-                raise NotImplementedError
+        raise NotImplementedError
     return optimizer
 
 

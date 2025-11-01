@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from .models import build_ACT_model, build_CNNMLP_model
+from .models import build_ACT_model, build_ACTJEPA_model, build_CNNMLP_model
 
 import IPython
 e = IPython.embed
@@ -169,7 +169,14 @@ def build_ACT_model_and_optimizer(args_override):
     for k, v in args_override.items():
         setattr(args, k, v)
 
-    model = build_ACT_model(args)
+    # Build ACTJEPA model if use_vitg is True, otherwise build standard ACT model
+    use_vitg = getattr(args, 'use_vitg', False)
+    if use_vitg:
+        model = build_ACTJEPA_model(args)
+        print("Built ACTJEPA model (hybrid RGB+tactile)")
+    else:
+        model = build_ACT_model(args)
+        print("Built ACT model (RGB only)")
     model.cuda()
 
     # Separate parameters: ViTG encoders should be frozen (no gradients)
