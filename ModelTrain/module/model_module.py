@@ -10,13 +10,15 @@ import matplotlib.pyplot as plt
 import time
 from torchvision import transforms
 from module.policy import ACTPolicy, CNNMLPPolicy, DiffusionPolicy
+from module.policy_jepa import ACTJEPAPolicy
+from module.policy_jepa_adapter import ACTJEPAAdapterPolicy
 from detr.models.latent_model import Latent_Model_Transformer
 from ModelTrain.model_train import arg_config
 
 def set_config():
     args = arg_config()
     ckpt_dir = args["ckpt_dir"]
-    policy_class = "ACT"
+    policy_class = args.get("policy_class", "ACT")  # Get from args, default to ACT
     task_name = args["task_name"]
     batch_size_train = args["batch_size"]
     batch_size_val = args["batch_size"]
@@ -25,7 +27,7 @@ def set_config():
     validate_every = args["validate_every"]
     save_every = args["save_every"]
     resume_ckpt_path = args["resume_ckpt_path"]
-    is_sim = task_name[None[:4]] == "sim_"
+    is_sim = task_name[:4] == "sim_" if len(task_name) >= 4 else False
     if is_sim or task_name == "all":
         from constants import SIM_TASK_CONFIGS
         task_config = SIM_TASK_CONFIGS[task_name]
@@ -66,7 +68,60 @@ def set_config():
          'action_dim':16, 
          'no_encoder':args["no_encoder"],
          'use_vitg':args.get("use_vitg", False),
-         'vitg_ckpt_path':args.get("vitg_ckpt_path", None)}
+         'vitg_ckpt_path':args.get("vitg_ckpt_path", None) or args.get("vit_ckpt_path", None)}
+    elif policy_class == "ACTJEPA":
+        enc_layers = 4
+        dec_layers = 7
+        nheads = 8
+        vit_ckpt = args.get("vit_ckpt_path") or args.get("vitg_ckpt_path")
+        policy_config = {'lr':args["lr"],  'num_queries':args["chunk_size"], 
+         'kl_weight':args["kl_weight"], 
+         'hidden_dim':args["hidden_dim"], 
+         'dim_feedforward':args["dim_feedforward"], 
+         'lr_backbone':lr_backbone, 
+         'backbone':backbone, 
+         'enc_layers':enc_layers, 
+         'dec_layers':dec_layers, 
+         'nheads':nheads, 
+         'camera_names':camera_names, 
+         'tactile_camera_names':tactile_camera_names,
+         'vq':False, 
+         'vq_class':None, 
+         'vq_dim':None, 
+         'action_dim':16, 
+         'no_encoder':args["no_encoder"],
+         'use_vitg':True,
+         'vitg_ckpt_path':vit_ckpt,
+         'vit_model':args.get("vit_model", "vitg")}
+    elif policy_class == "ACTJEPAAdapter":
+        enc_layers = 4
+        dec_layers = 7
+        nheads = 8
+        vit_ckpt = args.get("vit_ckpt_path") or args.get("vitg_ckpt_path")
+        policy_config = {'lr':args["lr"],  'num_queries':args["chunk_size"], 
+         'kl_weight':args["kl_weight"], 
+         'hidden_dim':args["hidden_dim"], 
+         'dim_feedforward':args["dim_feedforward"], 
+         'lr_backbone':lr_backbone, 
+         'backbone':backbone, 
+         'enc_layers':enc_layers, 
+         'dec_layers':dec_layers, 
+         'nheads':nheads, 
+         'camera_names':camera_names, 
+         'tactile_camera_names':tactile_camera_names,
+         'vq':False, 
+         'vq_class':None, 
+         'vq_dim':None, 
+         'action_dim':16, 
+         'no_encoder':args["no_encoder"],
+         'use_vitg':True,
+         'vitg_ckpt_path':vit_ckpt,
+         'vit_model':args.get("vit_model", "vitg"),
+         'adapter_hidden_dim':args.get("adapter_hidden_dim", 512),
+         'adapter_depth':args.get("adapter_depth", 3),
+         'adapter_dropout':args.get("adapter_dropout", 0.1),
+         'adapter_scale_init':args.get("adapter_scale_init", 0.1),
+         'adapter_pooling':args.get("adapter_pooling", "attention")}
     else:
         if policy_class == "Diffusion":
             policy_config = {'lr':args["lr"],  'camera_names':camera_names, 
@@ -128,14 +183,16 @@ class Imitate_Model:
     def __make_policy(self):
         if self.policy_class == "ACT":
             policy = ACTPolicy(self.policy_config)
+        elif self.policy_class == "ACTJEPA":
+            policy = ACTJEPAPolicy(self.policy_config)
+        elif self.policy_class == "ACTJEPAAdapter":
+            policy = ACTJEPAAdapterPolicy(self.policy_config)
+        elif self.policy_class == "CNNMLP":
+            policy = CNNMLPPolicy(self.policy_config)
+        elif self.policy_class == "Diffusion":
+            policy = DiffusionPolicy(self.policy_config)
         else:
-            if self.policy_class == "CNNMLP":
-                policy = CNNMLPPolicy(self.policy_config)
-            else:
-                if self.policy_class == "Diffusion":
-                    policy = DiffusionPolicy(self.policy_config)
-                else:
-                    raise NotImplementedError
+            raise NotImplementedError
         return policy
 
     def __image_process(self, observation, camera_names, rand_crop_resize=False):
