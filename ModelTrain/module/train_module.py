@@ -96,6 +96,36 @@ def train(args):
          'use_vitg':True,
          'vitg_ckpt_path':vit_ckpt,
          'vit_model':args.get("vit_model", "vitg")}
+    elif policy_class == "ACTJEPAAdapter":
+        enc_layers = 4
+        dec_layers = 7
+        nheads = 8
+        # Handle backward compatibility: vit_ckpt_path or vitg_ckpt_path
+        vit_ckpt = args.get("vit_ckpt_path") or args.get("vitg_ckpt_path")
+        policy_config = {'lr':args["lr"],  'num_queries':args["chunk_size"], 
+         'kl_weight':args["kl_weight"], 
+         'hidden_dim':args["hidden_dim"], 
+         'dim_feedforward':args["dim_feedforward"], 
+         'lr_backbone':lr_backbone, 
+         'backbone':backbone, 
+         'enc_layers':enc_layers, 
+         'dec_layers':dec_layers, 
+         'nheads':nheads, 
+         'camera_names':camera_names, 
+         'tactile_camera_names':tactile_camera_names,
+         'vq':False, 
+         'vq_class':None, 
+         'vq_dim':None, 
+         'action_dim':16, 
+         'no_encoder':args["no_encoder"],
+         'use_vitg':True,
+         'vitg_ckpt_path':vit_ckpt,
+         'vit_model':args.get("vit_model", "vitg"),
+         'adapter_hidden_dim':args.get("adapter_hidden_dim", 512),
+         'adapter_depth':args.get("adapter_depth", 3),
+         'adapter_dropout':args.get("adapter_dropout", 0.1),
+         'adapter_scale_init':args.get("adapter_scale_init", 0.1),
+         'adapter_pooling':args.get("adapter_pooling", "attention")}
     else:
         if policy_class == "Diffusion":
             policy_config = {'lr':args["lr"],  'camera_names':camera_names, 
@@ -155,6 +185,9 @@ def make_policy(policy_class, policy_config):
     elif policy_class == "ACTJEPA":
         from ModelTrain.module.policy_jepa import ACTJEPAPolicy
         policy = ACTJEPAPolicy(policy_config)
+    elif policy_class == "ACTJEPAAdapter":
+        from ModelTrain.module.policy_jepa_adapter import ACTJEPAAdapterPolicy
+        policy = ACTJEPAAdapterPolicy(policy_config)
     elif policy_class == "CNNMLP":
         policy = CNNMLPPolicy(policy_config)
     elif policy_class == "Diffusion":
@@ -168,6 +201,8 @@ def make_optimizer(policy_class, policy):
     if policy_class == "ACT":
         optimizer = policy.configure_optimizers()
     elif policy_class == "ACTJEPA":
+        optimizer = policy.configure_optimizers()
+    elif policy_class == "ACTJEPAAdapter":
         optimizer = policy.configure_optimizers()
     elif policy_class == "CNNMLP":
         optimizer = policy.configure_optimizers()

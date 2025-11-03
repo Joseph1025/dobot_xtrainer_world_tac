@@ -255,15 +255,18 @@ class ViTGEncoderSimple(nn.Module):
         
         print(f"ViT-{model_type.upper()} encoder loaded and frozen. Embed dim: {self.embed_dim}")
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_all_tokens: bool = False) -> torch.Tensor:
         """
-        Forward pass returning CLS token embeddings.
+        Forward pass returning CLS token embeddings or all patch tokens.
         
         Args:
             x: Input images (B, C, H, W), assumed to be already resized and normalized
+            return_all_tokens: If True, return all patch tokens (B, num_patches, embed_dim)
+                             If False, return only CLS token (B, embed_dim)
         
         Returns:
-            CLS embeddings (B, embed_dim)
+            CLS embeddings (B, embed_dim) if return_all_tokens=False
+            All patch tokens (B, num_patches, embed_dim) if return_all_tokens=True
         """
         # V-JEPA2 expects images to be already normalized (done in dataset)
         # No additional preprocessing needed here
@@ -281,15 +284,19 @@ class ViTGEncoderSimple(nn.Module):
             features = self.encoder(x)
             
             # V-JEPA2 outputs patch tokens: (B, num_patches, embed_dim)
-            # Extract CLS token or average pool
+            # Extract CLS token or return all tokens based on flag
             if isinstance(features, (tuple, list)):
                 features = features[0]
             
             if features.dim() == 3:  # (B, num_patches, embed_dim)
-                # Use CLS token (first token) or average pooling
-                features = features[:, 0, :]  # Take CLS token
+                if return_all_tokens:
+                    # Return all patch tokens
+                    return features  # (B, num_patches, embed_dim)
+                else:
+                    # Use CLS token (first token)
+                    features = features[:, 0, :]  # Take CLS token
             elif features.dim() == 2:  # (B, embed_dim)
-                # Already extracted
+                # Already extracted (shouldn't happen with return_all_tokens=True)
                 pass
         
         return features

@@ -162,6 +162,19 @@ def get_args_parser():
     parser.add_argument('--vit_ckpt_path', action='store', type=str, help='Path to ViT checkpoint file (.pt)', required=False)
     parser.add_argument('--vitg_ckpt_path', action='store', type=str, help='Path to ViTG checkpoint file (deprecated, use --vit_ckpt_path)', required=False)
     parser.add_argument('--tactile_camera_names', nargs='*', default=[], help='Names of tactile sensors for ViT')
+    
+    # Adapter-related arguments (for ACTJEPAAdapter)
+    parser.add_argument('--adapter_hidden_dim', action='store', type=int, default=512,
+                        help='Hidden dimension for residual adapter MLP')
+    parser.add_argument('--adapter_depth', action='store', type=int, default=3,
+                        help='Number of layers in adapter MLP')
+    parser.add_argument('--adapter_dropout', action='store', type=float, default=0.1,
+                        help='Dropout rate for adapter')
+    parser.add_argument('--adapter_scale_init', action='store', type=float, default=0.1,
+                        help='Initial value for residual scaling factor')
+    parser.add_argument('--adapter_pooling', action='store', type=str, default='attention',
+                        choices=['attention', 'mean'],
+                        help='Pooling type for aggregating patch tokens')
 
     return parser
 
@@ -228,6 +241,85 @@ def build_ACT_model_and_optimizer(args_override):
                 "lr": args.lr_backbone,
             },
         ]
+    
+    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
+                                  weight_decay=args.weight_decay)
+
+    return model, optimizer
+
+
+def build_ACTJEPAAdapter_model_and_optimizer(args_override):
+    """Build ACTJEPAAdapter model with adapter-enhanced ViT encoders"""
+    parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
+    args = parser.parse_args()
+
+    for k, v in args_override.items():
+        setattr(args, k, v)
+
+    # Build ACTJEPAAdapter model
+    from ModelTrain.detr.models.detr_jepa_adapter import build_jepa_adapter
+    model = build_jepa_adapter(args)
+    print("Built ACTJEPAAdapter model (hybrid RGB+Adapter-ViT)")
+    model.cuda()
+
+    # Separate parameters: 
+    # 1. ViT encoder base should be frozen (no gradients)
+    # 2. Adapter and pooling should be trainable
+    # 3. ResNet backbones get lower learning rate
+    # 4. Everything else gets standard learning rate
+    
+    param_dicts = []
+    
+    # Count frozen ViT parameters (should not require gradients)
+    vitg_base_params = [(n, p) for n, p in model.named_parameters() 
+                        if "vitg_encoder" in n and "vitg_base.encoder" in n]
+    vitg_base_trainable = sum(p.requires_grad for _, p in vitg_base_params)
+    vitg_base_total = len(vitg_base_params)
+    print(f"ViT base parameters: {vitg_base_total} total, {vitg_base_trainable} trainable (should be 0)")
+    
+    # Count adapter parameters (should be trainable)
+    adapter_params = [(n, p) for n, p in model.named_parameters() 
+                     if "vitg_encoder" in n and ("patch_adapter" in n or "pooling" in n or "query" in n)]
+    adapter_trainable = sum(p.requires_grad for _, p in adapter_params)
+    adapter_total = len(adapter_params)
+    print(f"Adapter parameters: {adapter_total} total, {adapter_trainable} trainable")
+    
+    # ResNet backbones with lower LR
+    has_backbones = any('backbone' in n for n, p in model.named_parameters())
+    if has_backbones:
+        backbone_params = [p for n, p in model.named_parameters() 
+                          if "backbone" in n and "vitg" not in n and p.requires_grad]
+        param_dicts.append({
+            "params": backbone_params,
+            "lr": args.lr_backbone,
+        })
+        print(f"ResNet backbone params: {len(backbone_params)} with LR={args.lr_backbone}")
+    
+    # Adapter and pooling with standard LR
+    adapter_param_list = [p for n, p in model.named_parameters()
+                         if "vitg_encoder" in n and ("patch_adapter" in n or "pooling" in n or "query" in n) 
+                         and p.requires_grad]
+    if adapter_param_list:
+        param_dicts.append({
+            "params": adapter_param_list,
+            "lr": args.lr,
+        })
+        print(f"Adapter params: {len(adapter_param_list)} with LR={args.lr}")
+    
+    # Everything else (transformer, projections, etc.) with standard LR
+    other_params = [p for n, p in model.named_parameters()
+                   if "backbone" not in n 
+                   and "vitg_encoder" not in n 
+                   and p.requires_grad]
+    param_dicts.append({
+        "params": other_params,
+        "lr": args.lr,
+    })
+    print(f"Other trainable params: {len(other_params)} with LR={args.lr}")
+    
+    # Total trainable parameters
+    total_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total trainable parameters: {total_trainable:,} ({total_trainable/1e6:.2f}M)")
     
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
