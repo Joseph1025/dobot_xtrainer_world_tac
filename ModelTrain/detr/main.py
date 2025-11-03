@@ -154,10 +154,14 @@ def get_args_parser():
     parser.add_argument('--future_len', action='store', type=int)
     parser.add_argument('--prediction_len', action='store', type=int)
     
-    # ViTG-related arguments
-    parser.add_argument('--use_vitg', action='store_true', default=False, help='Use ViTG encoder for tactile images')
-    parser.add_argument('--vitg_ckpt_path', action='store', type=str, help='Path to ViTG checkpoint file (.pt)', required=False)
-    parser.add_argument('--tactile_camera_names', nargs='*', default=[], help='Names of tactile sensors for ViTG')
+    # ViT-related arguments (for ACTJEPA)
+    parser.add_argument('--use_vitg', action='store_true', default=False, help='Use ViTG encoder for tactile images (deprecated)')
+    parser.add_argument('--vit_model', action='store', type=str, default='vitg', 
+                        choices=['vitg', 'vitl'],
+                        help='ViT model type for tactile processing: vitg (1408-dim) or vitl (1024-dim)')
+    parser.add_argument('--vit_ckpt_path', action='store', type=str, help='Path to ViT checkpoint file (.pt)', required=False)
+    parser.add_argument('--vitg_ckpt_path', action='store', type=str, help='Path to ViTG checkpoint file (deprecated, use --vit_ckpt_path)', required=False)
+    parser.add_argument('--tactile_camera_names', nargs='*', default=[], help='Names of tactile sensors for ViT')
 
     return parser
 

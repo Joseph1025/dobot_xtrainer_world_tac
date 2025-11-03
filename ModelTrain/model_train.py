@@ -38,9 +38,13 @@ def arg_config():
                         choices=['ACT', 'ACTJEPA', 'CNNMLP', 'Diffusion'],
                         help='Policy class to use (ACT for standard, ACTJEPA for hybrid RGB+tactile)')
     
-    # ViTG-related arguments (used by ACTJEPA)
+    # ViT-related arguments (used by ACTJEPA)
     parser.add_argument('--use_vitg', action='store_true', default=False, help='Use ViTG encoder for tactile images (deprecated, use --policy_class ACTJEPA instead)')
-    parser.add_argument('--vitg_ckpt_path', action='store', type=str, help='Path to ViTG checkpoint file (.pt)', required=False)
+    parser.add_argument('--vit_model', action='store', type=str, default='vitg', 
+                        choices=['vitg', 'vitl'],
+                        help='ViT model type for tactile processing: vitg (1408-dim) or vitl (1024-dim)')
+    parser.add_argument('--vit_ckpt_path', action='store', type=str, help='Path to ViT checkpoint file (.pt)', required=False)
+    parser.add_argument('--vitg_ckpt_path', action='store', type=str, help='Path to ViTG checkpoint file (deprecated, use --vit_ckpt_path)', required=False)
 
     return vars(parser.parse_args())
 

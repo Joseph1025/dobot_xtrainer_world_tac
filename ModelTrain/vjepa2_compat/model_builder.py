@@ -17,7 +17,7 @@ def create_vit_giant(img_size=224, patch_size=16, num_frames=2, tubelet_size=2):
         tubelet_size: Temporal patch size (must match checkpoint, typically 2)
     
     Returns:
-        ViT-Giant model
+        ViT-Giant model (1408-dim embeddings)
     
     Note: Even for static images, we use num_frames=2 and tubelet_size=2 to match
     the checkpoint architecture. We'll duplicate the image frame during inference.
@@ -27,6 +27,36 @@ def create_vit_giant(img_size=224, patch_size=16, num_frames=2, tubelet_size=2):
     # ViT-Giant with RoPE (matches your e150.pt checkpoint)
     # Use tubelet_size=2 to match checkpoint weights
     model = vision_transformer.vit_giant_xformers_rope(
+        patch_size=patch_size,
+        img_size=(img_size, img_size),
+        num_frames=num_frames,
+        tubelet_size=tubelet_size,
+    )
+    
+    return model
+
+
+def create_vit_large(img_size=224, patch_size=16, num_frames=2, tubelet_size=2):
+    """
+    Create a ViT-Large model compatible with V-JEPA2 checkpoints.
+    
+    Args:
+        img_size: Input image size
+        patch_size: Patch size for ViT
+        num_frames: Number of frames (must match checkpoint, typically 2 or 64)
+        tubelet_size: Temporal patch size (must match checkpoint, typically 2)
+    
+    Returns:
+        ViT-Large model (1024-dim embeddings)
+    
+    Note: Even for static images, we use num_frames=2 and tubelet_size=2 to match
+    the checkpoint architecture. We'll duplicate the image frame during inference.
+    """
+    from . import vision_transformer
+    
+    # ViT-Large with RoPE
+    # Use tubelet_size=2 to match checkpoint weights
+    model = vision_transformer.vit_large_rope(
         patch_size=patch_size,
         img_size=(img_size, img_size),
         num_frames=num_frames,

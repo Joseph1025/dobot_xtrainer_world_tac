@@ -75,6 +75,8 @@ def train(args):
         enc_layers = 4
         dec_layers = 7
         nheads = 8
+        # Handle backward compatibility: vit_ckpt_path or vitg_ckpt_path
+        vit_ckpt = args.get("vit_ckpt_path") or args.get("vitg_ckpt_path")
         policy_config = {'lr':args["lr"],  'num_queries':args["chunk_size"], 
          'kl_weight':args["kl_weight"], 
          'hidden_dim':args["hidden_dim"], 
@@ -92,7 +94,8 @@ def train(args):
          'action_dim':16, 
          'no_encoder':args["no_encoder"],
          'use_vitg':True,
-         'vitg_ckpt_path':args.get("vitg_ckpt_path", None)}
+         'vitg_ckpt_path':vit_ckpt,
+         'vit_model':args.get("vit_model", "vitg")}
     else:
         if policy_class == "Diffusion":
             policy_config = {'lr':args["lr"],  'camera_names':camera_names, 

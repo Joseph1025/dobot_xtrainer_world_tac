@@ -33,8 +33,8 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 
 
 class DETRJEPA(nn.Module):
-    """ DETRJEPA: Hybrid ACT model with ResNet backbones for RGB + V-JEPA2 ViTG for tactile """
-    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, vq, vq_class, vq_dim, action_dim, vitg_ckpt_path, tactile_camera_names):
+    """ DETRJEPA: Hybrid ACT model with ResNet backbones for RGB + V-JEPA2 ViT for tactile """
+    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, vq, vq_class, vq_dim, action_dim, vitg_ckpt_path, tactile_camera_names, vit_model='vitg'):
         """ Initializes the model.
         Parameters:
             backbones: torch module list of ResNet backbones for RGB cameras
@@ -45,8 +45,9 @@ class DETRJEPA(nn.Module):
             camera_names: list of RGB camera names
             vq, vq_class, vq_dim: vector quantization parameters
             action_dim: action dimension
-            vitg_ckpt_path: path to V-JEPA2 ViTG checkpoint file (.pt)
+            vitg_ckpt_path: path to V-JEPA2 ViT checkpoint file (.pt)
             tactile_camera_names: list of tactile sensor names
+            vit_model: ViT model type ('vitg' or 'vitl')
         """
         super().__init__()
         self.num_queries = num_queries
@@ -62,22 +63,25 @@ class DETRJEPA(nn.Module):
         self.is_pad_head = nn.Linear(hidden_dim, 1)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         
-        # ACTJEPA always uses hybrid architecture: ResNet for RGB + ViTG for tactile
-        print(f"ACTJEPA: ResNet for {len(camera_names)} RGB cameras + ViTG for {len(tactile_camera_names)} tactile sensors")
+        # ACTJEPA always uses hybrid architecture: ResNet for RGB + ViT for tactile
+        print(f"ACTJEPA: ResNet for {len(camera_names)} RGB cameras + ViT-{vit_model.upper()} for {len(tactile_camera_names)} tactile sensors")
         
         # Create ResNet backbones for RGB cameras
         self.backbones = nn.ModuleList(backbones)
         self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
         
-        # Create V-JEPA2 ViTG encoder for tactile sensors (shared across all tactile sensors)
+        # Create V-JEPA2 ViT encoder for tactile sensors (shared across all tactile sensors)
         from ModelTrain.module.vitg_encoder import ViTGEncoderSimple
-        print(f"Loading V-JEPA2 ViTG from: {vitg_ckpt_path}")
+        print(f"Loading V-JEPA2 ViT-{vit_model.upper()} from: {vitg_ckpt_path}")
         # Load once and share across all tactile sensors to save memory
-        # ViT-Giant outputs 1408-dim embeddings
-        self.vitg_encoder_shared = ViTGEncoderSimple(vitg_ckpt_path, embed_dim=1408, input_size=224)
+        # ViT-Giant outputs 1408-dim embeddings, ViT-Large outputs 1024-dim embeddings
+        self.vitg_encoder_shared = ViTGEncoderSimple(vitg_ckpt_path, input_size=224, model_type=vit_model)
         
-        # Project ViTG embeddings (1408-dim) to hidden_dim
-        self.vitg_proj = nn.Linear(1408, hidden_dim)
+        # Get actual embedding dimension from encoder
+        vit_embed_dim = self.vitg_encoder_shared.embed_dim
+        
+        # Project ViT embeddings to hidden_dim
+        self.vitg_proj = nn.Linear(vit_embed_dim, hidden_dim)
         
         # Position embedding for tactile features
         self.tactile_pos_embed = nn.Parameter(torch.randn(1, hidden_dim, 1))
@@ -279,7 +283,10 @@ def build_jepa(args):
     if len(backbones) == 0:
         raise ValueError("ACTJEPA requires at least one RGB camera")
     
-    print(f"Building ACTJEPA: {len(backbones)} ResNet backbones + {len(tactile_camera_names)} ViTG encoders")
+    # Get ViT model type from args
+    vit_model = getattr(args, 'vit_model', 'vitg')
+    
+    print(f"Building ACTJEPA: {len(backbones)} ResNet backbones + {len(tactile_camera_names)} ViT-{vit_model.upper()} encoders")
 
     transformer = build_transformer(args)
 
@@ -301,6 +308,7 @@ def build_jepa(args):
         action_dim=args.action_dim,
         vitg_ckpt_path=vitg_ckpt_path,
         tactile_camera_names=tactile_camera_names,
+        vit_model=vit_model,
     )
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

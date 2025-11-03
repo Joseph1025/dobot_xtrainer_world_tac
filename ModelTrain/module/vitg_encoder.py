@@ -13,7 +13,7 @@ from typing import Optional
 # Try to import V-JEPA2 model architecture (local copy for Python 3.8 compatibility)
 try:
     # Use local vjepa2_compat directory (Python 3.8 compatible)
-    from ModelTrain.vjepa2_compat.model_builder import create_vit_giant, load_vjepa2_weights
+    from ModelTrain.vjepa2_compat.model_builder import create_vit_giant, create_vit_large, load_vjepa2_weights
     VJEPA_AVAILABLE = True
 except ImportError as e:
     VJEPA_AVAILABLE = False
@@ -176,17 +176,29 @@ class ViTGEncoder(nn.Module):
 
 class ViTGEncoderSimple(nn.Module):
     """
-    V-JEPA2 ViTG encoder wrapper for tactile image processing.
+    V-JEPA2 ViT encoder wrapper for tactile image processing.
     Loads V-JEPA2 checkpoint and creates frozen encoder.
+    Supports both ViT-Giant (1408-dim) and ViT-Large (1024-dim).
     """
     
-    def __init__(self, ckpt_path: str, embed_dim: int = 1408, input_size: int = 224):
+    def __init__(self, ckpt_path: str, embed_dim: int = None, input_size: int = 224, model_type: str = 'vitg'):
         super().__init__()
         
-        self.embed_dim = embed_dim
+        self.model_type = model_type
         self.input_size = input_size
         
-        print(f"Loading ViTG checkpoint from: {ckpt_path}")
+        # Set embed_dim based on model_type if not explicitly provided
+        if embed_dim is None:
+            if model_type == 'vitg':
+                self.embed_dim = 1408
+            elif model_type == 'vitl':
+                self.embed_dim = 1024
+            else:
+                raise ValueError(f"Unknown model_type: {model_type}. Choose 'vitg' or 'vitl'")
+        else:
+            self.embed_dim = embed_dim
+        
+        print(f"Loading ViT-{model_type.upper()} checkpoint from: {ckpt_path}")
         
         # Load checkpoint directly to GPU to save RAM
         checkpoint = torch.load(ckpt_path, map_location='cuda')
@@ -208,15 +220,25 @@ class ViTGEncoderSimple(nn.Module):
                     "Check that backbones.py and vision_transformer.py exist there."
                 )
             
-            # Create V-JEPA2 ViT-G model
+            # Create V-JEPA2 ViT model based on model_type
             # Note: Must match checkpoint architecture (tubelet_size=2 for video models)
-            print(f"Creating V-JEPA2 ViT-G model (img_size={input_size}, tubelet_size=2)")
-            self.encoder = create_vit_giant(
-                img_size=input_size,
-                patch_size=16,
-                num_frames=2,  # Match checkpoint (will duplicate frames for static images)
-                tubelet_size=2,  # Match checkpoint architecture
-            )
+            print(f"Creating V-JEPA2 ViT-{model_type.upper()} model (img_size={input_size}, tubelet_size=2)")
+            if model_type == 'vitg':
+                self.encoder = create_vit_giant(
+                    img_size=input_size,
+                    patch_size=16,
+                    num_frames=2,  # Match checkpoint (will duplicate frames for static images)
+                    tubelet_size=2,  # Match checkpoint architecture
+                )
+            elif model_type == 'vitl':
+                self.encoder = create_vit_large(
+                    img_size=input_size,
+                    patch_size=16,
+                    num_frames=2,  # Match checkpoint (will duplicate frames for static images)
+                    tubelet_size=2,  # Match checkpoint architecture
+                )
+            else:
+                raise ValueError(f"Unknown model_type: {model_type}. Choose 'vitg' or 'vitl'")
             
             # Load weights using helper function
             use_target = 'target_encoder' in checkpoint
@@ -231,7 +253,7 @@ class ViTGEncoderSimple(nn.Module):
         
         self.encoder.eval()
         
-        print(f"ViTG encoder loaded and frozen. Embed dim: {self.embed_dim}")
+        print(f"ViT-{model_type.upper()} encoder loaded and frozen. Embed dim: {self.embed_dim}")
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
