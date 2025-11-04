@@ -21,6 +21,8 @@ from ModelTrain.module.utils import load_data
 from ModelTrain.module.utils import compute_dict_mean, set_seed, detach_dict
 from ModelTrain.module.policy import ACTPolicy, CNNMLPPolicy, DiffusionPolicy
 from ModelTrain.module.policy_with_hsa import ACTPolicyWithHSA, create_default_hsa_config
+from ModelTrain.module.policy_jepa_adapter import ACTJEPAAdapterPolicy
+from ModelTrain.module.policy_jepa_adapter_with_hsa import ACTJEPAHsa, create_default_hsa_config as create_hsa_config_jepa
 
 import IPython
 e = IPython.embed
@@ -170,6 +172,11 @@ def make_policy(policy_class, policy_config, hsa_config=None):
             policy = ACTPolicyWithHSA(policy_config, hsa_config)
         else:
             policy = ACTPolicy(policy_config)
+    elif policy_class == "ACTJEPAAdapter":
+        if hsa_config is not None and hsa_config.get('enable_hsa', False):
+            policy = ACTJEPAHsa(policy_config, hsa_config)
+        else:
+            policy = ACTJEPAAdapterPolicy(policy_config)
     elif policy_class == "CNNMLP":
         policy = CNNMLPPolicy(policy_config)
     elif policy_class == "Diffusion":
@@ -181,7 +188,7 @@ def make_policy(policy_class, policy_config, hsa_config=None):
 
 def make_optimizer(policy_class, policy):
     """Create optimizer for policy."""
-    if policy_class in ["ACT", "CNNMLP", "Diffusion"]:
+    if policy_class in ["ACT", "ACTJEPAAdapter", "CNNMLP", "Diffusion"]:
         optimizer = policy.configure_optimizers()
     else:
         raise NotImplementedError

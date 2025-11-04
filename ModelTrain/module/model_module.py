@@ -12,6 +12,7 @@ from torchvision import transforms
 from module.policy import ACTPolicy, CNNMLPPolicy, DiffusionPolicy
 from module.policy_jepa import ACTJEPAPolicy
 from module.policy_jepa_adapter import ACTJEPAAdapterPolicy
+from module.policy_jepa_adapter_with_hsa import ACTJEPAHsa
 from detr.models.latent_model import Latent_Model_Transformer
 from ModelTrain.model_train import arg_config
 
@@ -187,6 +188,10 @@ class Imitate_Model:
             policy = ACTJEPAPolicy(self.policy_config)
         elif self.policy_class == "ACTJEPAAdapter":
             policy = ACTJEPAAdapterPolicy(self.policy_config)
+        elif self.policy_class == "ACTJEPAHsa":
+            # For inference, create ACTJEPAHsa with HSA disabled (no loss computation needed)
+            hsa_config = {'enable_hsa': False}
+            policy = ACTJEPAHsa(self.policy_config, hsa_config)
         elif self.policy_class == "CNNMLP":
             policy = CNNMLPPolicy(self.policy_config)
         elif self.policy_class == "Diffusion":
