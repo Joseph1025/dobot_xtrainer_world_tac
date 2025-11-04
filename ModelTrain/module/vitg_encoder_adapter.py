@@ -101,12 +101,13 @@ class ViTGEncoderAdapter(nn.Module):
         total_vit_params = sum(1 for p in self.vitg_base.parameters())
         print(f"ViT parameters: {total_vit_params} total, {frozen_params} frozen")
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, draft_embedding: torch.Tensor = None) -> torch.Tensor:
         """
         Forward pass with adapter and attention pooling.
         
         Args:
             x: Input tactile images (B, C, H, W)
+            draft_embedding: Optional draft action embedding (B, embed_dim) to condition adapter
         
         Returns:
             Aggregated features (B, embed_dim) - same shape as ViTGEncoderSimple
@@ -115,11 +116,17 @@ class ViTGEncoderAdapter(nn.Module):
         # The vitg_base.forward() is called within torch.no_grad() internally
         patches = self.vitg_base(x, return_all_tokens=True)  # (B, num_patches, embed_dim)
         
-        # Apply residual adapter to all patches
+        # Optionally prepend draft embedding as first token (if provided)
+        if draft_embedding is not None:
+            draft_token = draft_embedding.unsqueeze(1)  # (B, 1, embed_dim)
+            patches = torch.cat([draft_token, patches], dim=1)  # (B, num_patches+1, embed_dim)
+        
+        # Apply residual adapter to all patches (including draft token if present)
         # Note: Adapter itself is trainable, so gradients flow here
-        adapted_patches = self.patch_adapter(patches)  # (B, num_patches, embed_dim)
+        adapted_patches = self.patch_adapter(patches)  # (B, num_patches[+1], embed_dim)
         
         # Aggregate patches using attention pooling
+        # If draft token is present, attention will learn to weight it vs tactile patches
         output = self.pooling(adapted_patches)  # (B, embed_dim)
         
         return output

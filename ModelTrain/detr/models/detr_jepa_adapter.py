@@ -124,6 +124,10 @@ class DETRJEPAAdapter(nn.Module):
         else:
             self.latent_out_proj = nn.Linear(self.latent_dim, hidden_dim) # project latent sample to embedding
         self.additional_pos_embed = nn.Embedding(2, hidden_dim) # learned position embedding for proprio and latent
+        
+        # Draft action projection for conditioning tactile encoder
+        self.draft_action_proj = nn.Linear(action_dim, vit_embed_dim)
+        print(f"Draft-then-refine enabled: draft action ({action_dim}) -> ViT embedding ({vit_embed_dim})")
 
 
     def encode(self, qpos, actions=None, is_pad=None, vq_sample=None):
@@ -182,16 +186,119 @@ class DETRJEPAAdapter(nn.Module):
 
         return latent_input, probs, binaries, mu, logvar
 
-    def forward(self, qpos, image, env_state, actions=None, is_pad=None, vq_sample=None):
+    def forward_draft(self, qpos, image, env_state, actions=None, is_pad=None, vq_sample=None):
         """
-        qpos: batch, qpos_dim
-        image: list of [rgb_data, tactile_data] or batch, num_cam, channel, height, width
-        env_state: None
-        actions: batch, seq, action_dim
+        Draft forward pass: Process RGB through ResNet + MASKED (zero) tactile embeddings.
+        
+        This maintains the same sequence structure as full forward pass for transformer reusability:
+        - RGB cameras: Normal ResNet processing
+        - Tactile sensors: Zero embeddings (masked out)
+        
+        Args:
+            qpos: batch, qpos_dim
+            image: list of [rgb_data, tactile_data] or batch, num_cam, channel, height, width
+            env_state: None
+            actions: batch, seq, action_dim (for VAE encoder)
+            is_pad: batch, seq (padding mask)
+            vq_sample: VQ sample if using VQ
+        
+        Returns:
+            a_hat_draft: Draft action predictions (batch, num_queries, action_dim)
+            is_pad_hat: Padding predictions
+            [mu, logvar]: Latent statistics
+            probs, binaries: VQ outputs
         """
+        # Encode latent z (same as full forward)
+        latent_input, probs, binaries, mu, logvar = self.encode(qpos, actions, is_pad, vq_sample)
+        
+        bs = qpos.shape[0]
+        all_features = []
+        all_pos = []
+        
+        # Extract RGB images only (tactile will be masked)
+        if isinstance(image, list):
+            rgb_images = image[0]  # (B, num_rgb, C, H, W)
+            # Note: tactile_images = image[1] - will be MASKED (not used)
+        else:
+            rgb_images = image[:, :len(self.camera_names)]
+        
+        # Process RGB cameras through ResNet (normal processing)
+        for cam_id, cam_name in enumerate(self.camera_names):
+            rgb_image = rgb_images[:, cam_id]
+            features, pos = self.backbones[cam_id](rgb_image)
+            features = features[0]  # (B, C, H, W)
+            pos = pos[0]
+            
+            # Project and flatten to sequence
+            projected = self.input_proj(features)  # (B, hidden_dim, H, W)
+            projected = projected.flatten(2)  # (B, hidden_dim, H*W)
+            all_features.append(projected)
+            
+            pos = pos.flatten(2)  # (1, hidden_dim, H*W)
+            all_pos.append(pos)
+        
+        # Process tactile sensors with MASKED (zero) embeddings
+        # This maintains sequence structure for transformer
+        hidden_dim = self.transformer.d_model
+        for tac_id, tac_name in enumerate(self.tactile_camera_names):
+            # Create zero embedding (masked tactile feature)
+            tac_feature = torch.zeros(bs, hidden_dim, 1, device=rgb_images.device)  # (B, hidden_dim, 1)
+            all_features.append(tac_feature)
+            
+            # Position embedding (same as full forward)
+            tac_pos = self.tactile_pos_embed  # (1, hidden_dim, 1)
+            all_pos.append(tac_pos)
+        
+        # Concatenate all features (RGB + masked tactile)
+        # Same sequence structure as full forward: [RGB tokens..., Tactile tokens...]
+        src = torch.cat(all_features, dim=2)  # (B, hidden_dim, total_seq_len)
+        pos = torch.cat(all_pos, dim=2)  # (1, hidden_dim, total_seq_len)
+        
+        # Reshape to 4D for transformer
+        src = src.unsqueeze(2)  # (B, hidden_dim, 1, seq_len)
+        pos = pos.unsqueeze(2)  # (1, hidden_dim, 1, seq_len)
+        
+        # Transformer decoder (reuses same architecture as full forward)
+        proprio_input = self.input_proj_robot_state(qpos)
+        hs = self.transformer(src, None, self.query_embed.weight, pos, latent_input, proprio_input, self.additional_pos_embed.weight)[0]
+        
+        # Draft action prediction
+        a_hat_draft = self.action_head(hs)
+        is_pad_hat = self.is_pad_head(hs)
+        
+        return a_hat_draft, is_pad_hat, [mu, logvar], probs, binaries
+
+    def forward(self, qpos, image, env_state, actions=None, is_pad=None, vq_sample=None, use_draft=False):
+        """
+        Full forward pass with optional draft-then-refine strategy.
+        
+        Args:
+            qpos: batch, qpos_dim
+            image: list of [rgb_data, tactile_data] or batch, num_cam, channel, height, width
+            env_state: None
+            actions: batch, seq, action_dim
+            is_pad: batch, seq (padding mask)
+            vq_sample: VQ sample if using VQ
+            use_draft: If True, first compute draft action (RGB + masked tactile), then condition tactile on it
+        
+        Returns:
+            a_hat: Action predictions (batch, num_queries, action_dim)
+            is_pad_hat: Padding predictions
+            [mu, logvar]: Latent statistics
+            probs, binaries: VQ outputs
+        """
+        # Optional: Generate draft action first (RGB + masked tactile, no gradients)
+        if use_draft:
+            with torch.no_grad():
+                a_hat_draft, _, _, _, _ = self.forward_draft(qpos, image, env_state, actions, is_pad, vq_sample)
+                # Use first timestep action as conditioning for tactile encoder
+                draft_action = a_hat_draft[:, 0, :]  # (B, action_dim)
+        else:
+            draft_action = None
+        
         latent_input, probs, binaries, mu, logvar = self.encode(qpos, actions, is_pad, vq_sample)
 
-        # ACTJEPAAdapter uses hybrid mode: Process RGB through ResNet + Tactile through Adapter-ViT
+        # ACTJEPAAdapter uses hybrid mode: Process RGB through ResNet + Tactile through Adapter-ViT (conditioned on draft)
         bs = qpos.shape[0]
         all_features = []
         all_pos = []
@@ -223,11 +330,19 @@ class DETRJEPAAdapter(nn.Module):
         
         # Process tactile sensors through Adapter-ViT (shared encoder)
         # The adapter processes all patch tokens and pools them
+        # Optionally conditioned on draft action if use_draft=True
         for tac_id, tac_name in enumerate(self.tactile_camera_names):
             tactile_image = tactile_images[:, tac_id]
             
-            # Get adapter-enhanced ViT embedding (processes all patches internally)
-            tac_embedding = self.vitg_encoder_shared(tactile_image)  # (B, embed_dim)
+            # Project draft action to ViT embedding space if available
+            if draft_action is not None:
+                draft_embedding = self.draft_action_proj(draft_action)  # (B, vit_embed_dim)
+            else:
+                draft_embedding = None
+            
+            # Get adapter-enhanced ViT embedding (conditioned on draft if provided)
+            # Passes draft_embedding to adapter for cross-attention/conditioning
+            tac_embedding = self.vitg_encoder_shared(tactile_image, draft_embedding=draft_embedding)  # (B, embed_dim)
             
             # Project to hidden_dim
             tac_feature = self.vitg_proj(tac_embedding)  # (B, hidden_dim)
