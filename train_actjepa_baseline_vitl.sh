@@ -4,7 +4,9 @@
 # Task: dobot_peginhole_tac_1029 (peg-in-hole with tactile sensors)
 # Use this to compare against ACTJEPAAdapter
 
-cd /home/zexi/Dev/dobot_xtrainer_world_tac
+# Get the directory where the script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
 
 python ModelTrain/model_train.py \
     --policy_class ACTJEPA \
@@ -12,7 +14,7 @@ python ModelTrain/model_train.py \
     --ckpt_dir ckpt/actjepa_baseline_vitl \
     --num_steps 10000 \
     --vit_model vitl \
-    --vit_ckpt_path /home/zexi/Dev/dobot_xtrainer_world_tac/jepa_ckpts/vitl.pt \
+    --vit_ckpt_path ./jepa_ckpt/vitl.pt \
     --batch_size 16 \
     --lr 2e-5 \
     --kl_weight 10 \

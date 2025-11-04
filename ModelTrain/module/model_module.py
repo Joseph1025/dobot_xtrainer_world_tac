@@ -179,6 +179,8 @@ class Imitate_Model:
         self.temporal_agg = config["temporal_agg"]
         self.vq = config["policy_config"]["vq"]
         self.t = 0
+        # Store tactile camera names for proper image processing
+        self.tactile_camera_names = config["policy_config"].get("tactile_camera_names", [])
 
     def __make_policy(self):
         if self.policy_class == "ACT":
@@ -196,27 +198,64 @@ class Imitate_Model:
         return policy
 
     def __image_process(self, observation, camera_names, rand_crop_resize=False):
-        curr_images = []
-        for cam_name in camera_names:
-            # Try observation["images"][cam_name] first (RGB cameras)
-            # Then try observation[cam_name] directly (tactile sensors)
-            if "images" in observation and cam_name in observation["images"]:
-                curr_image = rearrange(observation["images"][cam_name], "h w c -> c h w")
-            elif cam_name in observation:
-                curr_image = rearrange(observation[cam_name], "h w c -> c h w")
-            else:
-                raise KeyError(f"Cannot find {cam_name} in observation['images'] or observation")
-            curr_images.append(curr_image)
+        # For JEPA policies: separate RGB and tactile (different resolutions)
+        # Match training logic from train_module.py forward_pass()
+        if self.policy_class in ["ACTJEPA", "ACTJEPAAdapter"] and self.tactile_camera_names:
+            # Separate RGB cameras from tactile sensors
+            rgb_cameras = [cam for cam in camera_names if cam not in self.tactile_camera_names]
+            
+            # Process RGB camera images
+            rgb_images = []
+            for cam_name in rgb_cameras:
+                if "images" in observation and cam_name in observation["images"]:
+                    curr_image = rearrange(observation["images"][cam_name], "h w c -> c h w")
+                else:
+                    raise KeyError(f"Cannot find RGB camera {cam_name} in observation['images']")
+                rgb_images.append(curr_image)
+            
+            # Stack RGB images
+            rgb_stacked = np.stack(rgb_images, axis=0)  # (num_rgb, C, H, W)
+            rgb_tensor = torch.from_numpy(rgb_stacked / 255.0).float().cuda().unsqueeze(0)  # (1, num_rgb, C, H, W)
+            
+            # Process tactile images
+            tactile_images = []
+            for cam_name in self.tactile_camera_names:
+                if cam_name in observation:
+                    curr_image = rearrange(observation[cam_name], "h w c -> c h w")
+                else:
+                    raise KeyError(f"Cannot find tactile sensor {cam_name} in observation")
+                tactile_images.append(curr_image)
+            
+            # Stack tactile images
+            tactile_stacked = np.stack(tactile_images, axis=0)  # (num_tactile, C, H, W)
+            tactile_tensor = torch.from_numpy(tactile_stacked / 255.0).float().cuda().unsqueeze(0)  # (1, num_tactile, C, H, W)
+            
+            # Return as list (can't concatenate due to different spatial sizes)
+            return [rgb_tensor, tactile_tensor]
+        
         else:
+            # Original logic for non-JEPA policies (all cameras same resolution)
+            curr_images = []
+            for cam_name in camera_names:
+                # Try observation["images"][cam_name] first (RGB cameras)
+                # Then try observation[cam_name] directly (tactile sensors)
+                if "images" in observation and cam_name in observation["images"]:
+                    curr_image = rearrange(observation["images"][cam_name], "h w c -> c h w")
+                elif cam_name in observation:
+                    curr_image = rearrange(observation[cam_name], "h w c -> c h w")
+                else:
+                    raise KeyError(f"Cannot find {cam_name} in observation['images'] or observation")
+                curr_images.append(curr_image)
+            
             curr_image = np.stack(curr_images, axis=0)
             curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
             if rand_crop_resize:
                 print("rand crop resize is used!")
-                original_size = curr_image.shape[(-2)[:None]]
+                original_size = curr_image.shape[-2:]
                 ratio = 0.95
-                curr_image = curr_image[(...,
-                 int(original_size[0] * (1 - ratio) / 2)[:int(original_size[0] * (1 + ratio) / 2)],
-                 int(original_size[1] * (1 - ratio) / 2)[:int(original_size[1] * (1 + ratio) / 2)])]
+                curr_image = curr_image[...,
+                 int(original_size[0] * (1 - ratio) / 2):int(original_size[0] * (1 + ratio) / 2),
+                 int(original_size[1] * (1 - ratio) / 2):int(original_size[1] * (1 + ratio) / 2)]
                 curr_image = curr_image.squeeze(0)
                 resize_transform = transforms.Resize(original_size, antialias=True)
                 curr_image = resize_transform(curr_image)
@@ -233,9 +272,9 @@ class Imitate_Model:
 
     def loadModel(self):
         cur_path = os.path.dirname(os.path.abspath(__file__))
-        dir_path = os.path.dirname(cur_path)
+        dir_path = os.path.dirname(os.path.dirname(cur_path))  # Go up two levels to project root
         ckpt_path = os.path.join(self.ckpt_dir, self.ckpt_name)
-        ckpt_path = dir_path + ckpt_path[1[:None]]
+        ckpt_path = dir_path + ckpt_path[1:]
         self.policy = self._Imitate_Model__make_policy()
         loading_status = self.policy.deserialize(torch.load(ckpt_path))
         print(loading_status)
@@ -252,7 +291,7 @@ class Imitate_Model:
             print(f"Loaded policy from: {ckpt_path}, latent model from: {latent_model_ckpt_path}")
         else:
             print(f"Loaded: {ckpt_path}")
-        stats_path = os.path.join(dir_path + self.ckpt_dir[1[:None]], "dataset_stats.pkl")
+        stats_path = os.path.join(dir_path + self.ckpt_dir[1:], "dataset_stats.pkl")
         with open(stats_path, "rb") as f:
             stats = pickle.load(f)
         self.pre_process = lambda s_qpos: (s_qpos - stats["qpos_mean"]) / stats["qpos_std"]
@@ -278,29 +317,37 @@ class Imitate_Model:
 
     def predict(self, observation, t, save_qpos_history=False):
         with torch.inference_mode():
+            raw_action = None
             qpos_numpy = np.array(observation["qpos"])
             self.qpos_history_raw[t] = qpos_numpy
             qpos = self.pre_process(qpos_numpy)
             qpos = torch.from_numpy(qpos).float().cuda().unsqueeze(0)
+            
+            # Get current image if at query frequency boundary
             if t % self.query_frequency == 0:
                 curr_image = self._Imitate_Model__image_process(observation, (self.camera_names), rand_crop_resize=(self.policy_class == "Diffusion"))
-            elif t == 0:
+            
+            # Warmup at t=0
+            if t == 0:
                 for _ in range(10):
                     self.policy(qpos, curr_image)
-                else:
-                    print("network warm up done")
-                    time1 = time.time()
+                print("network warm up done")
+                time1 = time.time()
 
-            elif self.policy_class == "ACT":
+            # Prediction logic based on policy class
+            if self.policy_class in ["ACT", "ACTJEPA", "ACTJEPAAdapter"]:
+                # Query the policy at the specified frequency
                 if t % self.query_frequency == 0:
                     if self.vq:
                         self.vq_sample = self.latent_model.generate(1, temperature=1, x=None)
                         self.all_actions = self.policy(qpos, curr_image, vq_sample=(self.vq_sample))
                     else:
                         self.all_actions = self.policy(qpos, curr_image)
-                elif self.temporal_agg:
-                    self.all_time_actions[([t], t[:t + self.num_queries])] = self.all_actions
-                    actions_for_curr_step = self.all_time_actions[(None[:None], t)]
+                
+                # Extract action for current timestep
+                if self.temporal_agg:
+                    self.all_time_actions[[t], t:t + self.num_queries] = self.all_actions
+                    actions_for_curr_step = self.all_time_actions[:, t]
                     actions_populated = torch.all((actions_for_curr_step != 0), axis=1)
                     actions_for_curr_step = actions_for_curr_step[actions_populated]
                     k = 0.01
@@ -309,12 +356,12 @@ class Imitate_Model:
                     exp_weights = torch.from_numpy(exp_weights).cuda().unsqueeze(dim=1)
                     raw_action = (actions_for_curr_step * exp_weights).sum(dim=0, keepdim=True)
                 else:
-                    raw_action = self.all_actions[(None[:None], t % self.query_frequency)]
+                    raw_action = self.all_actions[:, t % self.query_frequency]
             else:
                 if self.config["policy_class"] == "Diffusion":
                     if t % self.query_frequency == 0:
                         self.all_actions = self.policy(qpos, curr_image)
-                    raw_action = self.all_actions[(None[:None], t % self.query_frequency)]
+                    raw_action = self.all_actions[:, t % self.query_frequency]
                 else:
                     if self.config["policy_class"] == "CNNMLP":
                         raw_action = self.policy(qpos, curr_image)
@@ -323,8 +370,8 @@ class Imitate_Model:
                         raise NotImplementedError
             raw_action = raw_action.squeeze(0).cpu().numpy()
             action = self.post_process(raw_action)
-            target_qpos = action[None[:-2]]
-            base_action = action[(-2)[:None]]
+            target_qpos = action[:-2]
+            base_action = action[-2:]
             self.qpos_list.append(qpos_numpy)
             self.target_qpos_list.append(target_qpos)
             if save_qpos_history:
@@ -333,7 +380,7 @@ class Imitate_Model:
                 plt.figure(figsize=(10, 20))
                 for i in range(self.state_dim):
                     plt.subplot(self.state_dim, 1, i + 1)
-                    plt.plot(self.qpos_history_raw[(None[:None], i)])
+                    plt.plot(self.qpos_history_raw[:, i])
                     if i != self.state_dim - 1:
                         plt.xticks([])
                     plt.tight_layout()

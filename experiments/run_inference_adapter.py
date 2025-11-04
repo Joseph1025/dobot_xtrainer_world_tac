@@ -22,6 +22,8 @@ from dobot_control.cameras.realsense_camera import RealSenseCamera
 from scripts.manipulate_utils import load_ini_data_camera
 
 from ModelTrain.module.model_module import Imitate_Model
+from digit_interface import Digit
+
 
 @dataclass
 class Args:
@@ -31,6 +33,10 @@ class Args:
     ckpt_dir: str = "./ckpt/actjepa_adapter_vitl"
     ckpt_name: str = "policy_last.ckpt"
     policy_class: str = "ACTJEPAAdapter"  # or "ACTJEPA" for baseline
+    task_name: str = "dobot_peginhole_tac_1029"  # Task name for loading config
+    vit_ckpt_path: str = "./jepa_ckpt/vitl.pt"  # Path to ViT checkpoint
+    vit_model: str = "vitl"  # ViT model type: "vitl" (1024-dim) or "vitg" (1408-dim)
+    temporal_agg: bool = True  # Use temporal aggregation for smooth actions
 
 image_left,image_right,image_top,image_tactile,thread_run=None,None,None,None,None
 lock = threading.Lock()
@@ -74,12 +80,9 @@ def main(args):
     rs3 = RealSenseCamera(flip=True, device_id=camera_dict["right"])
     
     # Tactile camera (if available)
-    has_tactile = "tactile1" in camera_dict
-    if has_tactile:
-        print(f"Tactile sensor found: {camera_dict['tactile1']}")
-        rs4 = RealSenseCamera(flip=False, device_id=camera_dict["tactile1"])
-    else:
-        print("WARNING: No tactile sensor configured. Using dummy tactile data.")
+    tactile1 = Digit('D21168')
+    tactile1.connect()
+    print("tactile1 connected")
     
     thread_cam_top = threading.Thread(target=run_thread_cam, args=(rs1, 0))
     thread_cam_left = threading.Thread(target=run_thread_cam, args=(rs2, 1))
@@ -88,10 +91,6 @@ def main(args):
     thread_cam_left.start()
     thread_cam_right.start()
     thread_cam_top.start()
-    
-    if has_tactile:
-        thread_cam_tactile = threading.Thread(target=run_thread_cam, args=(rs4, 3))
-        thread_cam_tactile.start()
     
     show_canvas = np.zeros((480, 640 * 3, 3), dtype=np.uint8)
     time.sleep(2)
@@ -161,11 +160,8 @@ def main(args):
         
         # Add tactile sensor data
         if args.policy_class in ["ACTJEPA", "ACTJEPAAdapter"]:
-            if has_tactile and image_tactile is not None:
-                observation['tactile1'] = image_tactile
-            else:
-                # Dummy tactile data if no sensor available
-                observation['tactile1'] = np.zeros((224, 224, 3), dtype=np.uint8)
+            tactile_frame = tactile1.get_frame()
+            observation['tactile1'] = cv2.resize(tactile_frame, (224, 224))
         
         if args.show_img:
             # Show RGB images

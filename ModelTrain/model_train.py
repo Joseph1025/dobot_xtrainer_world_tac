@@ -22,8 +22,7 @@ def arg_config():
     parser.add_argument('--eval_every', action='store', type=int, default=100, help='eval_every', required=False)  # Ignore this parameter and leave the default setting
     parser.add_argument('--validate_every', action='store', type=int, default=100, help='validate_every',required=False)
     parser.add_argument('--save_every', action='store', type=int, default=10000, help='save_every', required=False)
-    # parser.add_argument('--resume_ckpt_path', action='store', type=str, help='resume_ckpt_path', default= "./ckpt/ckpt_move_cube_new/policy_best.ckpt",required=False)
-    parser.add_argument('--resume_ckpt_path', action='store', type=str, help='resume_ckpt_path', required=False)
+    parser.add_argument('--resume_ckpt_path', action='store', type=str, help='resume_ckpt_path', default=None, required=False)
     parser.add_argument('--skip_mirrored_data', action='store_true')
 
     parser.add_argument('--kl_weight', action='store', type=int, help='KL divergence weight,recommended set 10 or 100', default=10,required=False)
@@ -59,7 +58,9 @@ def arg_config():
                         choices=['attention', 'mean'],
                         help='Pooling type for aggregating patch tokens')
 
-    return vars(parser.parse_args())
+    # Use parse_known_args to ignore unknown arguments (e.g., from inference scripts)
+    args, unknown = parser.parse_known_args()
+    return vars(args)
 
 if __name__ == '__main__':
     args = arg_config()
