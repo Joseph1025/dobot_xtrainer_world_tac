@@ -256,6 +256,25 @@ class ACTPolicyWithHSA(ACTPolicy):
         
         return base_output
     
+    def train(self, mode=True):
+        """
+        Set the module in training mode.
+        Also controls the feature extractor backbone if HSA is enabled.
+        """
+        super().train(mode)
+        if self.enable_hsa and self.feature_extractor is not None:
+            if mode:
+                self.feature_extractor.backbone.train()
+            else:
+                self.feature_extractor.backbone.eval()
+        return self
+    
+    def eval(self):
+        """
+        Set the module in evaluation mode.
+        """
+        return self.train(False)
+    
     def configure_optimizers(self):
         """
         Configure optimizer. If HSA is enabled, include feature extractor parameters.
@@ -266,13 +285,14 @@ class ACTPolicyWithHSA(ACTPolicy):
             # Get parameters from feature extractor
             all_params = list(base_optimizer.param_groups)
             
-            # Add feature extractor parameters (usually with smaller LR)
+            # Add feature extractor parameters (with slightly smaller LR)
             feature_params = list(self.feature_extractor.backbone.parameters())
             if len(feature_params) > 0:
                 all_params.append({
                     'params': feature_params,
-                    'lr': base_optimizer.param_groups[0]['lr'] * 0.1  # Lower LR for feature extractor
+                    'lr': base_optimizer.param_groups[0]['lr'] * 0.5  # 0.5x LR for feature extractor (was 0.1x)
                 })
+                print(f"Added {len(feature_params)} feature extractor params to optimizer with LR={base_optimizer.param_groups[0]['lr'] * 0.5:.2e}")
             
             # Create new optimizer with all parameters
             optimizer = torch.optim.AdamW(

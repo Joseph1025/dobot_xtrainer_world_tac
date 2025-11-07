@@ -15,6 +15,8 @@ from torchvision import transforms
 from ModelTrain.module.utils import load_data
 from ModelTrain.module.utils import compute_dict_mean, set_seed, detach_dict, calibrate_linear_vel, postprocess_base_action
 from ModelTrain.module.policy import ACTPolicy, CNNMLPPolicy, DiffusionPolicy
+from ModelTrain.module.policy_with_hsa import ACTPolicyWithHSA, create_default_hsa_config
+from ModelTrain.module.policy_jepa_adapter_with_hsa import ACTJEPAHsa, create_default_hsa_config as create_hsa_config_jepa
 import IPython
 e = IPython.embed
 
@@ -157,7 +159,15 @@ def train(args):
      'seed':args["seed"], 
      'temporal_agg':args["temporal_agg"], 
      'camera_names':camera_names, 
-     'load_pretrain':args["load_pretrain"]}
+     'load_pretrain':args["load_pretrain"],
+     'enable_hsa':args.get("enable_hsa", False),
+     'hsa_weight':args.get("hsa_weight", 1.0),
+     'hsa_temperature':args.get("hsa_temperature", 0.07),
+     'hsa_img_size':args.get("hsa_img_size", 224),
+     'hsa_feature_dim':args.get("hsa_feature_dim", 768),
+     'robot_type':args.get("robot_type", "Nova 2"),
+     'wrist_camera':args.get("wrist_camera", "left_wrist"),
+     'camera_params':args.get("camera_params", None)}
     if not os.path.isdir(ckpt_dir):
         os.makedirs(ckpt_dir)
     config_path = os.path.join(ckpt_dir, "config.pkl")
@@ -179,15 +189,22 @@ def train(args):
     print(f"Best ckpt, val loss {min_val_loss:.6f} @ step{best_step}")
 
 
-def make_policy(policy_class, policy_config):
+def make_policy(policy_class, policy_config, hsa_config=None):
+    """Create policy with optional HSA loss support."""
     if policy_class == "ACT":
-        policy = ACTPolicy(policy_config)
+        if hsa_config is not None and hsa_config.get('enable_hsa', False):
+            policy = ACTPolicyWithHSA(policy_config, hsa_config)
+        else:
+            policy = ACTPolicy(policy_config)
     elif policy_class == "ACTJEPA":
         from ModelTrain.module.policy_jepa import ACTJEPAPolicy
         policy = ACTJEPAPolicy(policy_config)
     elif policy_class == "ACTJEPAAdapter":
         from ModelTrain.module.policy_jepa_adapter import ACTJEPAAdapterPolicy
-        policy = ACTJEPAAdapterPolicy(policy_config)
+        if hsa_config is not None and hsa_config.get('enable_hsa', False):
+            policy = ACTJEPAHsa(policy_config, hsa_config)
+        else:
+            policy = ACTJEPAAdapterPolicy(policy_config)
     elif policy_class == "CNNMLP":
         policy = CNNMLPPolicy(policy_config)
     elif policy_class == "Diffusion":
@@ -235,7 +252,18 @@ def get_image(ts, camera_names, rand_crop_resize=False):
         return curr_image
 
 
-def forward_pass(data, policy):
+def forward_pass(data, policy, enable_hsa=False):
+    """
+    Forward pass through policy, handling both standard and HSA modes.
+    
+    Args:
+        data: Batch data (5 items with tactile) or (4 items without tactile)
+        policy: Policy model
+        enable_hsa: Whether to compute HSA loss (requires tactile data)
+    
+    Returns:
+        Forward dictionary with losses
+    """
     # Handle both old format (4 items) and new format (5 items with tactile)
     if len(data) == 5:
         # New format: RGB images, tactile images, qpos, action, is_pad
@@ -313,8 +341,36 @@ def train_bc(train_dataloader, val_dataloader, config):
     eval_every = config["eval_every"]
     validate_every = config["validate_every"]
     save_every = config["save_every"]
+    
+    # Setup HSA configuration if enabled
+    enable_hsa = config.get("enable_hsa", False)
+    hsa_config = None
+    if enable_hsa:
+        hsa_config = {
+            'enable_hsa': True,
+            'hsa_weight': config.get("hsa_weight", 1.0),
+            'temperature': config.get("hsa_temperature", 0.07),
+            'img_size': config.get("hsa_img_size", 224),
+            'feature_dim': config.get("hsa_feature_dim", 768),
+            'robot_type': config.get("robot_type", "Nova 2"),
+            'wrist_camera': config.get("wrist_camera", "left_wrist"),
+            'camera_params': config.get("camera_params", None)  # Camera calibration for gripper-aware offset
+        }
+    
     set_seed(seed)
-    policy = make_policy(policy_class, policy_config)
+    policy = make_policy(policy_class, policy_config, hsa_config)
+    
+    # Print HSA configuration if enabled
+    if enable_hsa:
+        print("\n" + "="*60)
+        print("HSA Loss ENABLED")
+        print(f"  Policy Class: {policy_class}")
+        print(f"  HSA Weight: {hsa_config['hsa_weight']}")
+        print(f"  Temperature: {hsa_config['temperature']}")
+        print(f"  Robot Type: {hsa_config['robot_type']}")
+        print(f"  Wrist Camera: {hsa_config['wrist_camera']}")
+        print("="*60 + "\n")
+    
     if config["load_pretrain"]:
         loading_status = policy.deserialize(torch.load(os.path.join("/home/interbotix_ws/src/act/ckpts/pretrain_all", "policy_step_50000_seed_0.ckpt")))
         print(f"loaded! {loading_status}")
@@ -328,6 +384,8 @@ def train_bc(train_dataloader, val_dataloader, config):
     train_dataloader = repeater(train_dataloader)
     train_loss = []
     val_loss = []
+    train_hsa = []  # Track HSA loss
+    val_hsa = []    # Track validation HSA loss
     last_time = time.time()
     start_time = last_time
     for step in tqdm(range(num_steps + 1)):
@@ -337,7 +395,7 @@ def train_bc(train_dataloader, val_dataloader, config):
                 policy.eval()
                 validation_dicts = []
                 for batch_idx, data in enumerate(val_dataloader):
-                    forward_dict = forward_pass(data, policy)
+                    forward_dict = forward_pass(data, policy, enable_hsa=enable_hsa)
                     validation_dicts.append(forward_dict)
                     if batch_idx > 50:
                         break
@@ -352,6 +410,21 @@ def train_bc(train_dataloader, val_dataloader, config):
             else:
                 print(f"Val loss:   {epoch_val_loss:.5f}")
                 val_loss.append(float(epoch_val_loss.item()))
+                
+                # Track HSA validation loss if enabled
+                if enable_hsa and 'val_hsa_total' in validation_summary:
+                    val_hsa.append(float(validation_summary['val_hsa_total'].mean().item()))
+                
+                # Print HSA losses prominently if enabled
+                if enable_hsa:
+                    hsa_keys = [k for k in validation_summary.keys() if 'hsa' in k.lower()]
+                    if hsa_keys:
+                        print("  HSA Losses:", end=" ")
+                        for k in hsa_keys:
+                            print(f"{k}: {validation_summary[k].mean().item():.3f}", end=" ")
+                        print()
+                
+                # Print all validation metrics
                 summary_string = ""
                 for k, v in validation_summary.items():
                     summary_string += f"{k}: {v.mean().item():.3f} "
@@ -365,11 +438,27 @@ def train_bc(train_dataloader, val_dataloader, config):
         policy.train()
         optimizer.zero_grad()
         data = next(train_dataloader)
-        forward_dict = forward_pass(data, policy)
+        forward_dict = forward_pass(data, policy, enable_hsa=enable_hsa)
         loss = forward_dict["loss"]
         loss.mean().backward()
         optimizer.step()
         train_loss.append(float(loss.mean().item()))
+        
+        # Track HSA training loss if enabled
+        if enable_hsa and 'hsa_total' in forward_dict:
+            train_hsa.append(float(forward_dict['hsa_total'].mean().item()))
+        
+        # Print training loss periodically (every 100 steps)
+        if step % 100 == 0 and step > 0:
+            train_summary = f"Step {step} - Train loss: {loss.mean().item():.5f}"
+            if enable_hsa and 'hsa_wrist' in forward_dict:
+                train_summary += f" | L1: {forward_dict['l1'].mean().item():.3f}"
+                train_summary += f" | KL: {forward_dict['kl'].mean().item():.3f}"
+                train_summary += f" | HSA_wrist: {forward_dict['hsa_wrist'].mean().item():.3f}"
+                if 'hsa_total' in forward_dict:
+                    train_summary += f" | HSA_total: {forward_dict['hsa_total'].mean().item():.3f}"
+            print(train_summary)
+        
         if step % save_every == 0:
             ckpt_path = os.path.join(ckpt_dir, f"policy_step_{step}_seed_{seed}.ckpt")
             torch.save(policy.serialize(), ckpt_path)
@@ -383,6 +472,8 @@ def train_bc(train_dataloader, val_dataloader, config):
         ckpt_path = os.path.join(ckpt_dir, f"policy_step_{best_step}_seed_{seed}.ckpt")
         torch.save(best_state_dict, ckpt_path)
         print(f"Training finished:\nSeed {seed}, val loss {min_val_loss:.6f} at step {best_step}")
+        
+        # Plot training loss
         plt.figure(figsize=(10, 6))
         plt.plot(train_loss, label="Training Loss")
         plt.title("Training Loss Over Steps")
@@ -391,16 +482,63 @@ def train_bc(train_dataloader, val_dataloader, config):
         plt.legend()
         plt.grid(True)
         plt.savefig(ckpt_dir + "/train_loss.png")
-        plt.show()
+        plt.close()
+        
+        # Plot validation loss
         plt.figure(figsize=(10, 6))
-        plt.plot(val_loss, label="val Loss")
-        plt.title("val Loss Over Steps")
+        plt.plot(val_loss, label="Validation Loss")
+        plt.title("Validation Loss Over Steps")
         plt.xlabel("Step")
         plt.ylabel("Loss")
         plt.legend()
         plt.grid(True)
         plt.savefig(ckpt_dir + "/val_loss.png")
-        plt.show()
+        plt.close()
+        
+        # Plot HSA losses if available
+        if enable_hsa and len(train_hsa) > 0:
+            # Training HSA loss
+            plt.figure(figsize=(10, 6))
+            plt.plot(train_hsa, label="Training HSA Loss", color='orange')
+            plt.title("HSA Training Loss Over Steps")
+            plt.xlabel("Step")
+            plt.ylabel("HSA Loss")
+            plt.legend()
+            plt.grid(True)
+            plt.savefig(ckpt_dir + "/train_hsa_loss.png")
+            plt.close()
+            
+            # Validation HSA loss
+            if len(val_hsa) > 0:
+                plt.figure(figsize=(10, 6))
+                plt.plot(val_hsa, label="Validation HSA Loss", color='red')
+                plt.title("HSA Validation Loss Over Steps")
+                plt.xlabel("Validation Step")
+                plt.ylabel("HSA Loss")
+                plt.legend()
+                plt.grid(True)
+                plt.savefig(ckpt_dir + "/val_hsa_loss.png")
+                plt.close()
+            
+            # Combined plot: Training and Validation HSA
+            if len(val_hsa) > 0:
+                plt.figure(figsize=(12, 6))
+                plt.plot(train_hsa, label="Training HSA Loss", color='orange', alpha=0.7)
+                # Map validation steps to training steps
+                val_steps = [i * validate_every for i in range(len(val_hsa))]
+                plt.plot(val_steps, val_hsa, label="Validation HSA Loss", color='red', linewidth=2)
+                plt.title("HSA Loss: Training vs Validation")
+                plt.xlabel("Step")
+                plt.ylabel("HSA Loss")
+                plt.legend()
+                plt.grid(True)
+                plt.savefig(ckpt_dir + "/hsa_loss_combined.png")
+                plt.close()
+            
+            print(f"HSA loss plots saved to {ckpt_dir}/")
+            if len(train_hsa) > 100:
+                print(f"  Initial HSA: {train_hsa[0]:.3f} → Final HSA: {train_hsa[-1]:.3f}")
+        
         return best_ckpt_info
 
 

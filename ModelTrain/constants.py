@@ -114,7 +114,7 @@ TASK_CONFIGS = {
     },
     'dobot_peginhole_tac_1029': {
         'dataset_dir': DATA_DIR + '/dobot_peginhole_tac_1029/train_data',
-        'episode_len': 10000,
+        'episode_len': 700,
         'train_ratio': 0.9,
         'camera_names': ['top', 'left_wrist', 'right_wrist'],  # RGB cameras
         'tactile_camera_names': ['tactile1']  # Tactile sensors for ViTG

@@ -240,7 +240,7 @@ def example_training_script():
     print("\n  To train with HSA loss, use the enhanced training script:")
     print("\n  Basic usage:")
     print("  ```bash")
-    print("  python ModelTrain/model_train_with_hsa.py \\")
+    print("  python ModelTrain/model_train.py \\")
     print("      --task_name dobot_pick_random_1013 \\")
     print("      --ckpt_dir ./ckpt/dobot_pick_hsa \\")
     print("      --enable_hsa \\")
@@ -250,7 +250,7 @@ def example_training_script():
     
     print("\n  With custom HSA parameters:")
     print("  ```bash")
-    print("  python ModelTrain/model_train_with_hsa.py \\")
+    print("  python ModelTrain/model_train.py \\")
     print("      --task_name dobot_pick_random_1013 \\")
     print("      --ckpt_dir ./ckpt/dobot_pick_hsa \\")
     print("      --enable_hsa \\")

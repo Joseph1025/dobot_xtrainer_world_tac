@@ -57,6 +57,23 @@ def arg_config():
     parser.add_argument('--adapter_pooling', action='store', type=str, default='attention',
                         choices=['attention', 'mean'],
                         help='Pooling type for aggregating patch tokens')
+    
+    # HSA Loss arguments
+    parser.add_argument('--enable_hsa', action='store_true', default=False,
+                        help='Enable HSA (Hard Sample Aware) loss for tactile-visual alignment')
+    parser.add_argument('--hsa_weight', action='store', type=float, default=1.0,
+                        help='Weight for HSA loss term (default: 1.0)')
+    parser.add_argument('--hsa_temperature', action='store', type=float, default=0.07,
+                        help='Temperature parameter for HSA contrastive loss (default: 0.07)')
+    parser.add_argument('--hsa_img_size', action='store', type=int, default=224,
+                        help='Image size for HSA feature extraction (default: 224)')
+    parser.add_argument('--hsa_feature_dim', action='store', type=int, default=768,
+                        help='Feature dimension for HSA backbone (default: 768)')
+    parser.add_argument('--robot_type', action='store', type=str, default='Nova 2',
+                        choices=['Nova 2', 'Nova 5'],
+                        help='Robot type for forward kinematics (default: Nova 2)')
+    parser.add_argument('--wrist_camera', action='store', type=str, default='left_wrist',
+                        help='Name of the wrist camera for HSA (default: left_wrist)')
 
     # Use parse_known_args to ignore unknown arguments (e.g., from inference scripts)
     args, unknown = parser.parse_known_args()
