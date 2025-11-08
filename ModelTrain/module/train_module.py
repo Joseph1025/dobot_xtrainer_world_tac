@@ -479,7 +479,6 @@ def train_bc(train_dataloader, val_dataloader, config):
         
         # Add smoothed line
         if len(train_loss) > 100:
-            import numpy as np
             window = min(100, len(train_loss) // 10)
             smoothed = np.convolve(train_loss, np.ones(window)/window, mode='valid')
             smooth_steps = list(range(window//2, len(train_loss) - window//2))
@@ -516,7 +515,6 @@ def train_bc(train_dataloader, val_dataloader, config):
             # Smoothed data using moving average
             window_size = min(100, len(train_hsa) // 10)  # Adaptive window
             if len(train_hsa) > window_size:
-                import numpy as np
                 smoothed = np.convolve(train_hsa, np.ones(window_size)/window_size, mode='valid')
                 smoothed_steps = list(range(window_size//2, len(train_hsa) - window_size//2))
                 plt.plot(smoothed_steps, smoothed, label=f"HSA Loss (smoothed, window={window_size})", 

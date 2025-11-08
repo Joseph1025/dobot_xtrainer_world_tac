@@ -10,9 +10,9 @@ cd "$SCRIPT_DIR"
 
 python ModelTrain/model_train.py \
     --policy_class ACTJEPAAdapter \
-    --task_name dobot_peginhole_tac_1029 \
-    --ckpt_dir ckpt/actjepa_adapter_vitl_hsa_new \
-    --num_steps 25000 \
+    --task_name dobot_peginhole_tac_1107 \
+    --ckpt_dir ckpt/actjepa_hsa_peg_1107 \
+    --num_steps 20000 \
     --vit_model vitl \
     --vit_ckpt_path ./jepa_ckpt/vitl.pt \
     --batch_size 16 \
