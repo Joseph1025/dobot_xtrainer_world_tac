@@ -27,7 +27,8 @@ import click
 
 
 
-def deal_data(pos_list, top_list, left_list, right_list):
+def deal_data(pos_list, top_list, left_list, right_list, tactile_dict_lists):
+    """Check if data dimension is consistent. Remove the longer dimension data if it is not consistent."""
     if len(pos_list) < len(top_list):
         for i in range(len(top_list)):
             file_name = top_list[i].split("/")[-1].split(".")[0] + ".pkl"
@@ -39,6 +40,8 @@ def deal_data(pos_list, top_list, left_list, right_list):
                 top_list.remove(top_list[i])
                 left_list.remove(left_list[i])
                 right_list.remove(right_list[i])
+                for tactile_name in tactile_dict_lists:
+                    tactile_dict_lists[tactile_name].remove(tactile_dict_lists[tactile_name][i])
     elif len(pos_list) > len(top_list):
         for i in range(len(pos_list)):
             # file_name = pos_list[i].split("/")[-1].split(".")[0] + ".npy"
@@ -47,12 +50,25 @@ def deal_data(pos_list, top_list, left_list, right_list):
                 print(pos_list[i])
                 os.remove(pos_list[i])
                 pos_list.remove(pos_list[i])
-    return pos_list, top_list, left_list, right_list
+                for tactile_name in tactile_dict_lists:
+                    tactile_dict_lists[tactile_name].remove(tactile_dict_lists[tactile_name][i])
+    return pos_list, top_list, left_list, right_list, tactile_dict_lists
 
 
 def load_data(one_dataset_dir):
     camera_names = ['top', 'left_wrist', 'right_wrist']
     print(camera_names)
+    
+    # Dynamically detect available tactile sensors
+    tactile_names = []
+    tactile_dirs = {'tactile1': 'leftTactile', 'tactile2': 'rightTactile'}
+    available_tactile_dirs = {}
+    for tactile_name, tactile_dir in tactile_dirs.items():
+        tactile_path = one_dataset_dir + tactile_dir + '/'
+        if os.path.exists(tactile_path) and len(glob.glob(tactile_path + '*.jpg')) > 0:
+            tactile_names.append(tactile_name)
+            available_tactile_dirs[tactile_name] = tactile_dir
+    print(f"Available tactile sensors: {tactile_names}")
 
     data_pose_list = glob.glob(one_dataset_dir + 'observation/*.pkl')
     # images_top_list = glob.glob(one_dataset_dir + 'topImg/*.npy')
@@ -66,9 +82,16 @@ def load_data(one_dataset_dir):
     images_left_list.sort(key=lambda x: int(x.split("/")[-1].split(".")[0]))
     images_right_list.sort(key=lambda x: int(x.split("/")[-1].split(".")[0]))
     # print(images_right_list)
+    
+    # Load available tactile sensor data
+    tactile_dict_lists = {}
+    for tactile_name in tactile_names:
+        tactile_list = glob.glob(one_dataset_dir + available_tactile_dirs[tactile_name] + '/*.jpg')
+        tactile_list.sort(key=lambda x: int(x.split("/")[-1].split(".")[0]))
+        tactile_dict_lists[tactile_name] = tactile_list
 
-    data_pose_list, images_top_list, images_left_list, images_right_list = (
-        deal_data(data_pose_list, images_top_list, images_left_list, images_right_list))
+    data_pose_list, images_top_list, images_left_list, images_right_list, tactile_dict_lists = (
+        deal_data(data_pose_list, images_top_list, images_left_list, images_right_list, tactile_dict_lists))
 
     is_sim = False
     qpos = []
@@ -76,9 +99,16 @@ def load_data(one_dataset_dir):
     action = []
     base_action = None
     image_dict = dict()
+    tactile_dict = dict()
     image_li = [[], [], []]
+    
+    # Initialize tactile_li based on available tactile sensors
+    tactile_li = {tactile_name: [] for tactile_name in tactile_names}
+    
     for cam_name in camera_names:
         image_dict[f'{cam_name}'] = []
+    for tactile_name in tactile_names:
+        tactile_dict[f'{tactile_name}'] = []
     for i in range(len(data_pose_list)):
         with open(data_pose_list[i], "rb") as f:
             data_single = pickle.load(f)
@@ -91,15 +121,27 @@ def load_data(one_dataset_dir):
             image_top = cv2.imread(images_top_list[i])
             image_left = cv2.imread(images_left_list[i])
             image_right = cv2.imread(images_right_list[i])
+            
+            # Read available tactile sensor images
+            for tactile_name in tactile_names:
+                tactile_img = cv2.imread(tactile_dict_lists[tactile_name][i])
+                tactile_li[tactile_name].append(tactile_img)
+            
             # cv2.imshow("0", image_right)
             # cv2.waitKey(1)
             image_li[0].append(image_top)
             image_li[1].append(image_left)
             image_li[2].append(image_right)
+    
     image_dict['top'] = image_li[0]
     image_dict['left_wrist'] = image_li[1]
     image_dict['right_wrist'] = image_li[2]
-    return np.array(qpos), np.array(qvel), np.array(action), base_action, image_dict, is_sim
+    
+    # Assign tactile data to tactile_dict
+    for tactile_name in tactile_names:
+        tactile_dict[tactile_name] = tactile_li[tactile_name]
+    
+    return np.array(qpos), np.array(qvel), np.array(action), base_action, image_dict, tactile_dict, is_sim
 
 
 @click.command()
@@ -120,7 +162,7 @@ def main(root_dir, dataset_name, date_collect, idx):
 
     one_data_dir = dataset_dir+date_collect+"/"
     print(one_data_dir)
-    qpos, qvel, action, base_action, image_dict, is_sim = load_data(one_data_dir)
+    qpos, qvel, action, base_action, image_dict, tactile_dict, is_sim = load_data(one_data_dir)
     qpos = np.concatenate([qpos[:, :7] * MIRROR_STATE_MULTIPLY, qpos[:, 7:] * MIRROR_STATE_MULTIPLY], axis=1)
     qvel = np.concatenate([qvel[:, :7] * MIRROR_STATE_MULTIPLY, qvel[:, 7:] * MIRROR_STATE_MULTIPLY], axis=1)
     action = np.concatenate([action[:, :7] * MIRROR_STATE_MULTIPLY, action[:, 7:] * MIRROR_STATE_MULTIPLY], axis=1)
@@ -144,6 +186,12 @@ def main(root_dir, dataset_name, date_collect, idx):
     else:
         raise Exception('No top or cam_high in image_dict')
 
+    # Flexible tactile sensor handling - no exception if some are missing
+    if len(tactile_dict) == 0:
+        print("Warning: No tactile sensors found in the dataset")
+    else:
+        print(f"Found {len(tactile_dict)} tactile sensor(s): {list(tactile_dict.keys())}")
+
     # saving
     data_dict = {
         '/observations/qpos': qpos,
@@ -157,6 +205,8 @@ def main(root_dir, dataset_name, date_collect, idx):
     }
     for cam_name in image_dict.keys():
         data_dict[f'/observations/images/{cam_name}'] = image_dict[cam_name]
+    for tactile_name in tactile_dict.keys():
+        data_dict[f'/observations/{tactile_name}'] = tactile_dict[tactile_name]
     max_timesteps = len(qpos)
 
     COMPRESS = True
@@ -193,6 +243,49 @@ def main(root_dir, dataset_name, date_collect, idx):
             data_dict[f'/observations/images/{cam_name}'] = padded_compressed_image_list
         print(f'padding: {time.time() - t0:.2f}s')
 
+        # Compress tactile images
+        t0 = time.time()
+        tactile_compressed_len = []
+        for tactile_name in tactile_dict.keys():
+            tactile_list = data_dict[f'/observations/{tactile_name}']
+            compressed_list = []
+            tactile_compressed_len.append([])
+            for tactile_image in tactile_list:
+                result, encoded_image = cv2.imencode('.jpg', tactile_image, encode_param)
+                compressed_list.append(encoded_image)
+                tactile_compressed_len[-1].append(len(encoded_image))
+            data_dict[f'/observations/{tactile_name}'] = compressed_list
+        print(f'tactile compression: {time.time() - t0:.2f}s')
+
+        # Re-pad all images (cameras + tactile) with updated padded_size
+        t0 = time.time()
+        # Combine camera and tactile compression lengths
+        all_compressed_len = np.concatenate([compressed_len, np.array(tactile_compressed_len)], axis=0)
+        padded_size = all_compressed_len.max()
+        
+        # Re-pad camera images
+        for cam_name in image_dict.keys():
+            compressed_image_list = data_dict[f'/observations/images/{cam_name}']
+            padded_compressed_image_list = []
+            for compressed_image in compressed_image_list:
+                padded_compressed_image = np.zeros(padded_size, dtype='uint8')
+                image_len = len(compressed_image)
+                padded_compressed_image[:image_len] = compressed_image
+                padded_compressed_image_list.append(padded_compressed_image)
+            data_dict[f'/observations/images/{cam_name}'] = padded_compressed_image_list
+        
+        # Pad tactile images
+        for tactile_name in tactile_dict.keys():
+            compressed_tactile_list = data_dict[f'/observations/{tactile_name}']
+            padded_compressed_tactile_list = []
+            for compressed_tactile in compressed_tactile_list:
+                padded_compressed_tactile = np.zeros(padded_size, dtype='uint8')
+                tactile_len = len(compressed_tactile)
+                padded_compressed_tactile[:tactile_len] = compressed_tactile
+                padded_compressed_tactile_list.append(padded_compressed_tactile)
+            data_dict[f'/observations/{tactile_name}'] = padded_compressed_tactile_list
+        print(f'tactile padding: {time.time() - t0:.2f}s')
+
     # HDF5
     t0 = time.time()
     dataset_path = os.path.join(output_train_data, f'episode_init_{idx}')
@@ -208,6 +301,13 @@ def main(root_dir, dataset_name, date_collect, idx):
             else:
                 _ = image.create_dataset(cam_name, (max_timesteps, 480, 640, 3), dtype='uint8',
                                          chunks=(1, 480, 640, 3), )
+        for tactile_name in tactile_dict.keys():
+            if COMPRESS:
+                _ = obs.create_dataset(tactile_name, (max_timesteps, padded_size), dtype='uint8',
+                                         chunks=(1, padded_size), )
+            else:
+                _ = obs.create_dataset(tactile_name, (max_timesteps, 480, 640, 3), dtype='uint8',
+                                         chunks=(1, 480, 640, 3), )
         qpos = obs.create_dataset('qpos', (max_timesteps, 14))
         qvel = obs.create_dataset('qvel', (max_timesteps, 14))
         action = root.create_dataset('action', (max_timesteps, 14))
@@ -218,8 +318,8 @@ def main(root_dir, dataset_name, date_collect, idx):
             root[name][...] = array
 
         if COMPRESS:
-            _ = root.create_dataset('compress_len', (len(image_dict.keys()), max_timesteps))
-            root['/compress_len'][...] = compressed_len
+            _ = root.create_dataset('compress_len', (len(image_dict.keys()) + len(tactile_dict.keys()), max_timesteps))
+            root['/compress_len'][...] = all_compressed_len
 
     print(f'Saving {dataset_path}: {time.time() - t0:.1f} secs\n')
 

@@ -9,6 +9,8 @@ from copy import deepcopy
 from itertools import repeat
 from tqdm import tqdm
 from einops import rearrange
+import matplotlib
+matplotlib.use('Agg')  # Set backend for headless plotting
 import matplotlib.pyplot as plt
 import time
 from torchvision import transforms

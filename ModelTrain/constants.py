@@ -126,9 +126,16 @@ TASK_CONFIGS = {
         'camera_names': ['top', 'left_wrist', 'right_wrist'],  # RGB cameras
         'tactile_camera_names': ['tactile1']  # Tactile sensors for ViTG
     },
-    'dobot_gearassem_tac_1107': {
-        'dataset_dir': DATA_DIR + '/dobot_gearassem_tac_1107/train_data',
+    'dobot_gearassemb_tac_1107': {
+        'dataset_dir': DATA_DIR + '/dobot_gearassemb_tac_1107/train_data',
         'episode_len': 700,
+        'train_ratio': 0.9,
+        'camera_names': ['top', 'left_wrist', 'right_wrist'],  # RGB cameras
+        'tactile_camera_names': ['tactile1']  # Tactile sensors for ViTG
+    },
+    'dobot_usb_tac_1107': {
+        'dataset_dir': DATA_DIR + '/dobot_usb_tac_1107/train_data',
+        'episode_len': 500,
         'train_ratio': 0.9,
         'camera_names': ['top', 'left_wrist', 'right_wrist'],  # RGB cameras
         'tactile_camera_names': ['tactile1']  # Tactile sensors for ViTG

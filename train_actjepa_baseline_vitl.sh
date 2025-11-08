@@ -10,8 +10,8 @@ cd "$SCRIPT_DIR"
 
 python ModelTrain/model_train.py \
     --policy_class ACTJEPA \
-    --task_name dobot_peginhole_tac_1029 \
-    --ckpt_dir ckpt/actjepa_baseline_vitl \
+    --task_name dobot_peginhole_tac_1107 \
+    --ckpt_dir ckpt/actjepa_baseline_peg_1108 \
     --num_steps 10000 \
     --vit_model vitl \
     --vit_ckpt_path ./jepa_ckpt/vitl.pt \

@@ -1,7 +1,7 @@
 import os
 import glob
 import numpy as np
-from scripts.function_util import mk_dir
+from function_util import mk_dir
 from pathlib import Path
 import tyro
 from dataclasses import dataclass
@@ -9,13 +9,14 @@ from dataclasses import dataclass
 
 @dataclass
 class Args:
-    dataset_name: str = "dobot_peginhole_tac_1029"
+    dataset_name: str = "dobot_usb_tac_1107"
 
 
 def main(args):
     root_dir = str(Path(__file__).parent.parent.parent / "datasets/")
     dataset_dir = root_dir + "/" + args.dataset_name + "/collect_data/"
     mk_dir(dataset_dir)
+    print(dataset_dir)
     output_video_dir = root_dir + "/" + args.dataset_name + "/output_videos/"
     mk_dir(output_video_dir)
     output_train_data = root_dir + "/" + args.dataset_name + "/train_data/"

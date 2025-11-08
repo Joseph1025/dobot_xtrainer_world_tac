@@ -1,8 +1,8 @@
 import os
 
 
-root_dir = "/home/zexi/Dev/dobot_xtrainer_decompiled/dobot_xtrainer/datasets"
-dataset_name = "dobot_pick_random_1012"
+root_dir = "/home/zexi/Dev/dobot_xtrainer_world_tac/datasets"
+dataset_name = "dobot_usb_tac_1107"
 
 dataset_dir = root_dir + "/" + dataset_name + "/collect_data/"
 all_data_dir = os.listdir(dataset_dir)
