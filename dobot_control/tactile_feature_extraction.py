@@ -468,9 +468,8 @@ class TactileFeatureExtractor:
         # Preprocess image
         img_tensor = self.transform(wrist_image).unsqueeze(0).to(self.device)
         
-        # Extract features
-        with torch.no_grad():
-            features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
+        # Extract features (gradients enabled for training)
+        features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
         
         # Compute gripper-based offset if enabled
         if self.use_gripper_offset and gripper_width is not None and camera_K is not None:
@@ -564,9 +563,8 @@ class TactileFeatureExtractor:
         # Preprocess image
         img_tensor = self.transform(tp_image).unsqueeze(0).to(self.device)
         
-        # Extract features
-        with torch.no_grad():
-            features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
+        # Extract features (gradients enabled for training)
+        features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
         
         # Map bounding box to feature grid
         orig_h, orig_w = tp_image.shape[:2]
@@ -623,9 +621,8 @@ class TactileFeatureExtractor:
         # Preprocess image
         img_tensor = self.transform(tactile_image).unsqueeze(0).to(self.device)
         
-        # Extract features
-        with torch.no_grad():
-            features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
+        # Extract features (gradients enabled for training)
+        features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
         
         # Mean pool over all tokens
         h_tau = features.mean(dim=1).squeeze(0)  # (embed_dim,)

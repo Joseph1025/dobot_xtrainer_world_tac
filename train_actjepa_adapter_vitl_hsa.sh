@@ -11,7 +11,7 @@ cd "$SCRIPT_DIR"
 python ModelTrain/model_train.py \
     --policy_class ACTJEPAAdapter \
     --task_name dobot_peginhole_tac_1029 \
-    --ckpt_dir ckpt/actjepa_adapter_vitl_hsa \
+    --ckpt_dir ckpt/actjepa_adapter_vitl_hsa_new \
     --num_steps 25000 \
     --vit_model vitl \
     --vit_ckpt_path ./jepa_ckpt/vitl.pt \
@@ -39,6 +39,6 @@ python ModelTrain/model_train.py \
 
 echo "Training with HSA completed!"
 echo "HSA loss should decrease from ~4.0 to ~1.0 during training."
-echo "Check ckpt/actjepa_adapter_vitl_hsa/ for results."
+echo "Check ckpt/actjepa_adapter_vitl_hsa_new/ for results."
 
 

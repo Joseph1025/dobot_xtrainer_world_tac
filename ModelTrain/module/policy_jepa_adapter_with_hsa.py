@@ -141,13 +141,24 @@ class ACTJEPAHsa(ACTJEPAAdapterPolicy):
             clip_total_params = sum(p.numel() for p in self.feature_extractor.backbone.parameters())
             clip_trainable_params = sum(p.numel() for p in self.feature_extractor.backbone.parameters() if p.requires_grad)
             clip_frozen_params = clip_total_params - clip_trainable_params
-            print(f"  Total Parameters: {clip_total_params:,}")
-            print(f"  Trainable Parameters: {clip_trainable_params:,}")
+            num_param_tensors = len(list(self.feature_extractor.backbone.parameters()))
+            
+            print(f"  Parameter Tensors: {num_param_tensors}")
+            print(f"  Total Parameters: {clip_total_params:,} ({clip_total_params/1e6:.1f}M)")
+            print(f"  Trainable Parameters: {clip_trainable_params:,} ({clip_trainable_params/1e6:.1f}M)")
             print(f"  Frozen Parameters: {clip_frozen_params:,}")
             print(f"  Image Size: {img_size}x{img_size}")
             print(f"  Patch Size: {patch_size}x{patch_size}")
             print(f"  Embed Dimension: {feature_dim}")
             print(f"  Feature Grid Shape: {self.feature_extractor.feature_grid_shape}")
+            
+            # Verify all CLIP components are included
+            print(f"\n  CLIP Module Breakdown:")
+            for name, module in self.feature_extractor.backbone.named_children():
+                module_params = sum(p.numel() for p in module.parameters())
+                module_trainable = sum(p.numel() for p in module.parameters() if p.requires_grad)
+                print(f"    {name}: {module_params:,} params ({module_params/1e6:.1f}M, {module_trainable:,} trainable)")
+            
             print(f"{'='*60}\n")
         else:
             self.feature_extractor = None
@@ -337,10 +348,23 @@ class ACTJEPAHsa(ACTJEPAAdapterPolicy):
             base_output['hsa_total'] = hsa_loss_dict['hsa_total']
             if 'hsa_tp' in hsa_loss_dict:
                 base_output['hsa_tp'] = hsa_loss_dict['hsa_tp']
+            
+            # IMPORTANT: Add weighted HSA loss to total loss for backprop
             base_output['loss'] = base_output['loss'] + self.hsa_weight * hsa_loss_dict['hsa_total']
+            
+            # Verify gradients will flow (check requires_grad)
+            if not hasattr(self, '_grad_check_done'):
+                self._grad_check_done = True
+                print(f"\n[HSA Gradient Check]")
+                print(f"  h_tau requires_grad: {h_tau.requires_grad}")
+                print(f"  h_w requires_grad: {h_w.requires_grad}")
+                print(f"  HSA loss requires_grad: {hsa_loss_dict['hsa_total'].requires_grad}")
+                print(f"  Total loss requires_grad: {base_output['loss'].requires_grad}\n")
             
         except Exception as e:
             print(f"Warning: Failed to compute HSA loss: {e}")
+            import traceback
+            traceback.print_exc()
             # Continue training without HSA loss on error
         
         return base_output
@@ -377,13 +401,22 @@ class ACTJEPAHsa(ACTJEPAAdapterPolicy):
             # Add feature extractor parameters
             # Higher LR helps HSA loss converge faster (CLIP needs to learn alignment from scratch)
             feature_params = list(self.feature_extractor.backbone.parameters())
-            if len(feature_params) > 0:
+            
+            # Verify parameters are trainable
+            trainable_params = [p for p in feature_params if p.requires_grad]
+            frozen_params = [p for p in feature_params if not p.requires_grad]
+            
+            if len(trainable_params) > 0:
                 clip_lr_multiplier = 1.0  # Same as base LR for faster convergence
                 all_params.append({
-                    'params': feature_params,
+                    'params': trainable_params,
                     'lr': base_optimizer.param_groups[0]['lr'] * clip_lr_multiplier
                 })
-                print(f"Added {len(feature_params)} feature extractor params to optimizer with LR={base_optimizer.param_groups[0]['lr'] * clip_lr_multiplier:.2e}")
+                print(f"Added {len(trainable_params)} CLIP params to optimizer with LR={base_optimizer.param_groups[0]['lr'] * clip_lr_multiplier:.2e}")
+                if len(frozen_params) > 0:
+                    print(f"  ⚠ WARNING: {len(frozen_params)} CLIP params are frozen!")
+            else:
+                print(f"  ⚠ ERROR: No trainable CLIP parameters found! All {len(feature_params)} params are frozen!")
             
             # Create new optimizer with all parameters
             optimizer = torch.optim.AdamW(
