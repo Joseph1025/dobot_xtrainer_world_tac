@@ -473,39 +473,61 @@ def train_bc(train_dataloader, val_dataloader, config):
         torch.save(best_state_dict, ckpt_path)
         print(f"Training finished:\nSeed {seed}, val loss {min_val_loss:.6f} at step {best_step}")
         
-        # Plot training loss
-        plt.figure(figsize=(10, 6))
-        plt.plot(train_loss, label="Training Loss")
+        # Plot training loss with smoothing
+        plt.figure(figsize=(12, 6))
+        plt.plot(train_loss, label="Training Loss (raw)", color='blue', alpha=0.2, linewidth=0.5)
+        
+        # Add smoothed line
+        if len(train_loss) > 100:
+            import numpy as np
+            window = min(100, len(train_loss) // 10)
+            smoothed = np.convolve(train_loss, np.ones(window)/window, mode='valid')
+            smooth_steps = list(range(window//2, len(train_loss) - window//2))
+            plt.plot(smooth_steps, smoothed, label=f"Training Loss (smoothed)", 
+                    color='darkblue', linewidth=2)
+        
         plt.title("Training Loss Over Steps")
         plt.xlabel("Step")
         plt.ylabel("Loss")
         plt.legend()
-        plt.grid(True)
-        plt.savefig(ckpt_dir + "/train_loss.png")
+        plt.grid(True, alpha=0.3)
+        plt.savefig(ckpt_dir + "/train_loss.png", dpi=150)
         plt.close()
         
         # Plot validation loss
         plt.figure(figsize=(10, 6))
-        plt.plot(val_loss, label="Validation Loss")
+        plt.plot(val_loss, label="Validation Loss", color='green', linewidth=2, marker='o', markersize=4)
         plt.title("Validation Loss Over Steps")
-        plt.xlabel("Step")
+        plt.xlabel("Validation Step")
         plt.ylabel("Loss")
         plt.legend()
-        plt.grid(True)
-        plt.savefig(ckpt_dir + "/val_loss.png")
+        plt.grid(True, alpha=0.3)
+        plt.savefig(ckpt_dir + "/val_loss.png", dpi=150)
         plt.close()
         
         # Plot HSA losses if available
         if enable_hsa and len(train_hsa) > 0:
-            # Training HSA loss
-            plt.figure(figsize=(10, 6))
-            plt.plot(train_hsa, label="Training HSA Loss", color='orange')
+            # Training HSA loss with smoothing
+            plt.figure(figsize=(12, 6))
+            
+            # Raw data with transparency
+            plt.plot(train_hsa, label="HSA Loss (raw)", color='orange', alpha=0.2, linewidth=0.5)
+            
+            # Smoothed data using moving average
+            window_size = min(100, len(train_hsa) // 10)  # Adaptive window
+            if len(train_hsa) > window_size:
+                import numpy as np
+                smoothed = np.convolve(train_hsa, np.ones(window_size)/window_size, mode='valid')
+                smoothed_steps = list(range(window_size//2, len(train_hsa) - window_size//2))
+                plt.plot(smoothed_steps, smoothed, label=f"HSA Loss (smoothed, window={window_size})", 
+                        color='darkorange', linewidth=2)
+            
             plt.title("HSA Training Loss Over Steps")
             plt.xlabel("Step")
             plt.ylabel("HSA Loss")
             plt.legend()
-            plt.grid(True)
-            plt.savefig(ckpt_dir + "/train_hsa_loss.png")
+            plt.grid(True, alpha=0.3)
+            plt.savefig(ckpt_dir + "/train_hsa_loss.png", dpi=150)
             plt.close()
             
             # Validation HSA loss
@@ -523,16 +545,29 @@ def train_bc(train_dataloader, val_dataloader, config):
             # Combined plot: Training and Validation HSA
             if len(val_hsa) > 0:
                 plt.figure(figsize=(12, 6))
-                plt.plot(train_hsa, label="Training HSA Loss", color='orange', alpha=0.7)
-                # Map validation steps to training steps
+                
+                # Raw training data (very transparent)
+                plt.plot(train_hsa, color='orange', alpha=0.15, linewidth=0.5, label='Training (raw)')
+                
+                # Smoothed training data
+                window_size = min(100, len(train_hsa) // 10)
+                if len(train_hsa) > window_size:
+                    smoothed = np.convolve(train_hsa, np.ones(window_size)/window_size, mode='valid')
+                    smoothed_steps = list(range(window_size//2, len(train_hsa) - window_size//2))
+                    plt.plot(smoothed_steps, smoothed, color='darkorange', linewidth=2, 
+                            label=f'Training (smoothed)')
+                
+                # Validation data
                 val_steps = [i * validate_every for i in range(len(val_hsa))]
-                plt.plot(val_steps, val_hsa, label="Validation HSA Loss", color='red', linewidth=2)
+                plt.plot(val_steps, val_hsa, color='red', linewidth=2.5, 
+                        marker='o', markersize=4, label='Validation')
+                
                 plt.title("HSA Loss: Training vs Validation")
                 plt.xlabel("Step")
                 plt.ylabel("HSA Loss")
                 plt.legend()
-                plt.grid(True)
-                plt.savefig(ckpt_dir + "/hsa_loss_combined.png")
+                plt.grid(True, alpha=0.3)
+                plt.savefig(ckpt_dir + "/hsa_loss_combined.png", dpi=150)
                 plt.close()
             
             print(f"HSA loss plots saved to {ckpt_dir}/")
