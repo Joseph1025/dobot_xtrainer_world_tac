@@ -2,7 +2,8 @@
 import pathlib
 import os
 
-DATA_DIR = '/home/ubuntu/cvpr1/dobot_xtrainer_world_tac/datasets'
+#DATA_DIR = '/home/ubuntu/cvpr1/dobot_xtrainer_world_tac/datasets'
+DATA_DIR = '/home/zexi/Dev/dobot_xtrainer_world_tac/datasets'
 TASK_CONFIGS = {
     # dobot clean dishes
     'clean_dishes_task': {

@@ -72,11 +72,13 @@ class ACTPolicyWithHSA(ACTPolicy):
             feature_dim = hsa_config.get('feature_dim', 768)
             img_size = hsa_config.get('img_size', 224)
             patch_size = hsa_config.get('patch_size', 16)
+            num_heads = hsa_config.get('num_heads', 12)  # Default 12 for ViT-L (768), use 16 for ViT-G (1408)
             
             self.feature_extractor = TactileFeatureExtractor(
                 img_size=img_size,
                 patch_size=patch_size,
                 embed_dim=feature_dim,
+                num_heads=num_heads,
                 device='cuda' if torch.cuda.is_available() else 'cpu'
             )
             
@@ -406,6 +408,8 @@ def create_default_hsa_config(
     hsa_weight: float = 1.0,
     temperature: float = 0.07,
     img_size: int = 224,
+    feature_dim: int = 768,
+    num_heads: int = 12,
     wrist_camera_idx: int = 1,
     tactile_camera_idx: int = 0,
     robot_type: str = 'Nova 2'
@@ -418,6 +422,8 @@ def create_default_hsa_config(
         hsa_weight: Weight for HSA loss
         temperature: Temperature for contrastive loss
         img_size: Image size for feature extraction
+        feature_dim: Feature dimension (768 for ViT-L, 1408 for ViT-G)
+        num_heads: Number of attention heads (12 for ViT-L, 16 for ViT-G)
         wrist_camera_idx: Index of wrist camera in RGB camera list
         tactile_camera_idx: Index of tactile sensor in tactile camera list
         robot_type: Robot type for forward kinematics
@@ -431,7 +437,8 @@ def create_default_hsa_config(
         'temperature': temperature,
         'use_third_person': False,
         'tp_weight': 0.5,
-        'feature_dim': 768,
+        'feature_dim': feature_dim,
+        'num_heads': num_heads,
         'img_size': img_size,
         'patch_size': 16,
         'camera_params': None,  # Will use default

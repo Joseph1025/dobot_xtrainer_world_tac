@@ -167,6 +167,7 @@ def train(args):
      'hsa_temperature':args.get("hsa_temperature", 0.07),
      'hsa_img_size':args.get("hsa_img_size", 224),
      'hsa_feature_dim':args.get("hsa_feature_dim", 768),
+     'hsa_num_heads':args.get("hsa_num_heads", 12),
      'robot_type':args.get("robot_type", "Nova 2"),
      'wrist_camera':args.get("wrist_camera", "left_wrist"),
      'camera_params':args.get("camera_params", None)}
@@ -348,14 +349,26 @@ def train_bc(train_dataloader, val_dataloader, config):
     enable_hsa = config.get("enable_hsa", False)
     hsa_config = None
     if enable_hsa:
+        # Compute wrist camera index from camera names
+        wrist_camera_name = config.get("wrist_camera", "left_wrist")
+        camera_names = config['camera_names']
+        try:
+            wrist_camera_idx = camera_names.index(wrist_camera_name)
+        except ValueError:
+            print(f"Warning: Wrist camera '{wrist_camera_name}' not found in camera_names {camera_names}, using index 1 (left_wrist)")
+            wrist_camera_idx = 1
+        
         hsa_config = {
             'enable_hsa': True,
             'hsa_weight': config.get("hsa_weight", 1.0),
             'temperature': config.get("hsa_temperature", 0.07),
             'img_size': config.get("hsa_img_size", 224),
             'feature_dim': config.get("hsa_feature_dim", 768),
+            'num_heads': config.get("hsa_num_heads", 12),
             'robot_type': config.get("robot_type", "Nova 2"),
-            'wrist_camera': config.get("wrist_camera", "left_wrist"),
+            'wrist_camera': wrist_camera_name,
+            'wrist_camera_idx': wrist_camera_idx,
+            'tactile_camera_idx': 0,  # Default to first tactile sensor
             'camera_params': config.get("camera_params", None)  # Camera calibration for gripper-aware offset
         }
     

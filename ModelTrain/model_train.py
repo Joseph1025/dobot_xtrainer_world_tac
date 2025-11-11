@@ -69,6 +69,8 @@ def arg_config():
                         help='Image size for HSA feature extraction (default: 224)')
     parser.add_argument('--hsa_feature_dim', action='store', type=int, default=768,
                         help='Feature dimension for HSA backbone (default: 768)')
+    parser.add_argument('--hsa_num_heads', action='store', type=int, default=12,
+                        help='Number of attention heads for HSA backbone (default: 12 for ViT-L, use 16 for ViT-G)')
     parser.add_argument('--robot_type', action='store', type=str, default='Nova 2',
                         choices=['Nova 2', 'Nova 5'],
                         help='Robot type for forward kinematics (default: Nova 2)')

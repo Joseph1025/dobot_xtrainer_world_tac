@@ -362,6 +362,7 @@ class TactileFeatureExtractor:
                  img_size: int = 640,
                  patch_size: int = 16,
                  embed_dim: int = 768,
+                 num_heads: int = 12,
                  device: str = 'cpu'):
         """
         Initialize the feature extractor.
@@ -370,6 +371,7 @@ class TactileFeatureExtractor:
             img_size: Input image size (will be resized to this)
             patch_size: Patch size for Vision Transformer
             embed_dim: Embedding dimension
+            num_heads: Number of attention heads (must divide embed_dim evenly)
             device: Device to run on ('cpu' or 'cuda')
         """
         if not TORCH_AVAILABLE:
@@ -382,7 +384,8 @@ class TactileFeatureExtractor:
         self.backbone = CLIPLikeBackbone(
             img_size=img_size,
             patch_size=patch_size,
-            embed_dim=embed_dim
+            embed_dim=embed_dim,
+            num_heads=num_heads
         ).to(self.device)
         # Note: backbone starts in training mode by default
         # Policy will control train/eval mode during training/inference
