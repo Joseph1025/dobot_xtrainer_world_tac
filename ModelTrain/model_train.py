@@ -67,6 +67,12 @@ def arg_config():
     parser.add_argument('--freeze_clip', action='store_true', default=False,
                         help='Freeze CLIP encoder weights (default: False, i.e., trainable)')
     
+    # Text conditioning arguments
+    parser.add_argument('--enable_text', action='store_true', default=True,
+                        help='Enable text conditioning using CLIP text encoder')
+    parser.add_argument('--text_prompt', action='store', type=str, default="Insert the peg into the hole",
+                        help='Text prompt for task conditioning (e.g., "insert USB cable", "pick red block")')
+    
     # HSA Loss arguments
     parser.add_argument('--enable_hsa', action='store_true', default=False,
                         help='Enable HSA (Hard Sample Aware) loss for tactile-visual alignment')

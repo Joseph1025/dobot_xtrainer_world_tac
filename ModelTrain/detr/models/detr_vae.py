@@ -324,7 +324,8 @@ def build(args):
             pretrained=getattr(args, 'clip_pretrained', 'openai'),
             hidden_dim=args.hidden_dim,
             freeze=getattr(args, 'freeze_clip', False),
-            image_size=224  # CLIP default
+            image_size=224,  # CLIP default
+            enable_text=getattr(args, 'enable_text', False)
         )
     else:
         # Legacy ResNet backbones

@@ -31,6 +31,7 @@ class CLIPEncoder(nn.Module):
     
     Uses pretrained CLIP models and extracts spatial patch tokens
     for use in transformer-based policies.
+    Also optionally includes text encoding capability.
     """
     
     def __init__(self,
@@ -38,7 +39,8 @@ class CLIPEncoder(nn.Module):
                  pretrained: str = 'openai',
                  hidden_dim: int = 512,
                  freeze: bool = False,
-                 image_size: int = 224):
+                 image_size: int = 224,
+                 enable_text: bool = False):
         """
         Initialize CLIP encoder.
         
@@ -48,6 +50,7 @@ class CLIPEncoder(nn.Module):
             hidden_dim: Output feature dimension (for projection layer)
             freeze: If True, freeze CLIP weights (no gradient updates)
             image_size: Input image size (CLIP default is 224)
+            enable_text: If True, also initialize text encoder for language conditioning
         """
         super().__init__()
         
@@ -58,6 +61,7 @@ class CLIPEncoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.freeze = freeze
         self.image_size = image_size
+        self.enable_text = enable_text
         
         # Load CLIP model
         print(f"Loading CLIP model: {model_name} with {pretrained} weights")
@@ -66,6 +70,11 @@ class CLIPEncoder(nn.Module):
             pretrained=pretrained,
             image_size=image_size
         )
+        
+        # Load tokenizer if text encoding is enabled
+        if enable_text:
+            self.tokenizer = open_clip.get_tokenizer(model_name)
+            print(f"CLIP text encoder enabled")
         
         # Get CLIP feature dimension
         self.clip_dim = self.clip_model.visual.output_dim
@@ -89,6 +98,10 @@ class CLIPEncoder(nn.Module):
         # Shape: (1, hidden_dim, num_patches)
         self.pos_embed = nn.Parameter(torch.randn(1, hidden_dim, self.num_patches))
         
+        # Text projection if text encoding is enabled
+        if enable_text:
+            self.text_projection = nn.Linear(self.clip_dim, hidden_dim)
+        
         # Freeze CLIP weights if requested
         if freeze:
             self._freeze_clip()
@@ -100,6 +113,7 @@ class CLIPEncoder(nn.Module):
         print(f"  - Patch size: {patch_size}")
         print(f"  - Num patches: {self.num_patches} ({self.num_patches_per_side}x{self.num_patches_per_side})")
         print(f"  - Frozen: {freeze}")
+        print(f"  - Text encoding: {enable_text}")
     
     def _freeze_clip(self):
         """Freeze CLIP model parameters."""
@@ -206,6 +220,38 @@ class CLIPEncoder(nn.Module):
         
         return images
     
+    def encode_text(self, text_prompts):
+        """
+        Encode text prompts using CLIP text encoder.
+        
+        Args:
+            text_prompts: List of text strings or single text string
+        
+        Returns:
+            Text embeddings, shape (B, hidden_dim) where B is number of prompts
+        """
+        if not self.enable_text:
+            raise RuntimeError("Text encoding not enabled. Set enable_text=True during initialization.")
+        
+        # Convert to list if single string
+        if isinstance(text_prompts, str):
+            text_prompts = [text_prompts]
+        
+        # Tokenize text
+        text_tokens = self.tokenizer(text_prompts).to(next(self.parameters()).device)
+        
+        # Encode text
+        if self.freeze:
+            with torch.no_grad():
+                text_features = self.clip_model.encode_text(text_tokens)
+        else:
+            text_features = self.clip_model.encode_text(text_tokens)
+        
+        # Project to hidden_dim
+        text_embeddings = self.text_projection(text_features)  # (B, hidden_dim)
+        
+        return text_embeddings
+    
     def get_num_params(self) -> int:
         """Return the number of parameters in the encoder."""
         total = sum(p.numel() for p in self.parameters())
@@ -218,7 +264,8 @@ def create_clip_encoder(model_name: str = 'ViT-B-16',
                         pretrained: str = 'openai',
                         hidden_dim: int = 512,
                         freeze: bool = False,
-                        image_size: int = 224) -> CLIPEncoder:
+                        image_size: int = 224,
+                        enable_text: bool = False) -> CLIPEncoder:
     """
     Factory function to create a CLIP encoder.
     
@@ -228,6 +275,7 @@ def create_clip_encoder(model_name: str = 'ViT-B-16',
         hidden_dim: Output feature dimension
         freeze: Whether to freeze CLIP weights
         image_size: Input image size
+        enable_text: Whether to enable text encoding
     
     Returns:
         CLIPEncoder instance
@@ -237,6 +285,7 @@ def create_clip_encoder(model_name: str = 'ViT-B-16',
         pretrained=pretrained,
         hidden_dim=hidden_dim,
         freeze=freeze,
-        image_size=image_size
+        image_size=image_size,
+        enable_text=enable_text
     )
 

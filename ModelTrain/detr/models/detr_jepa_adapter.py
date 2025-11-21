@@ -37,7 +37,8 @@ class DETRJEPAAdapter(nn.Module):
     def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, 
                  vq, vq_class, vq_dim, action_dim, vitg_ckpt_path, tactile_camera_names, 
                  vit_model='vitg', adapter_hidden_dim=512, adapter_depth=3, 
-                 adapter_dropout=0.1, adapter_scale_init=0.1, adapter_pooling='attention', clip_encoder=None):
+                 adapter_dropout=0.1, adapter_scale_init=0.1, adapter_pooling='attention', 
+                 clip_encoder=None, text_embedding=None):
         """ Initializes the model.
         Parameters:
             backbones: torch module list of ResNet backbones for RGB cameras (deprecated, use clip_encoder)
@@ -138,6 +139,11 @@ class DETRJEPAAdapter(nn.Module):
         # Draft action projection for conditioning tactile encoder
         self.draft_action_proj = nn.Linear(action_dim, vit_embed_dim)
         print(f"Draft-then-refine enabled: draft action ({action_dim}) -> ViT embedding ({vit_embed_dim})")
+        
+        # Store text embedding if provided (for text-conditioned tasks)
+        self.text_embedding = text_embedding
+        if text_embedding is not None:
+            print(f"Text conditioning enabled: text embedding shape {text_embedding.shape}")
 
 
     def encode(self, qpos, actions=None, is_pad=None, vq_sample=None):
@@ -400,6 +406,14 @@ class DETRJEPAAdapter(nn.Module):
         
         # Proprioception and transformer
         proprio_input = self.input_proj_robot_state(qpos)
+        
+        # Add text embedding to latent if available (text conditioning)
+        if self.text_embedding is not None:
+            # Expand text embedding to batch size and add to latent
+            text_emb_expanded = self.text_embedding.unsqueeze(0).expand(bs, -1).to(latent_input.device)
+            # Concatenate or add text embedding to latent (you can modify this)
+            latent_input = latent_input + text_emb_expanded
+        
         hs = self.transformer(src, None, self.query_embed.weight, pos, latent_input, proprio_input, self.additional_pos_embed.weight)[0]
         
         a_hat = self.action_head(hs)
@@ -450,7 +464,8 @@ def build_jepa_adapter(args):
             pretrained=getattr(args, 'clip_pretrained', 'openai'),
             hidden_dim=args.hidden_dim,
             freeze=getattr(args, 'freeze_clip', False),
-            image_size=224  # CLIP default
+            image_size=224,  # CLIP default
+            enable_text=getattr(args, 'enable_text', False)
         )
     else:
         # Legacy: Build ResNet backbones for RGB cameras only (not tactile)
@@ -484,6 +499,16 @@ def build_jepa_adapter(args):
     else:
         encoder = build_encoder(args)
 
+    # Encode text prompt if provided
+    text_embedding = None
+    if clip_encoder is not None and hasattr(clip_encoder, 'enable_text') and clip_encoder.enable_text:
+        text_prompt = getattr(args, 'text_prompt', None)
+        if text_prompt:
+            print(f"Encoding text prompt: '{text_prompt}'")
+            with torch.no_grad():  # Text encoding doesn't need gradients during training
+                text_embedding = clip_encoder.encode_text(text_prompt).squeeze(0)  # (hidden_dim,)
+            print(f"Text embedding shape: {text_embedding.shape}")
+    
     model = DETRJEPAAdapter(
         backbones,
         transformer,
@@ -504,6 +529,7 @@ def build_jepa_adapter(args):
         adapter_scale_init=adapter_scale_init,
         adapter_pooling=adapter_pooling,
         clip_encoder=clip_encoder,
+        text_embedding=text_embedding,
     )
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

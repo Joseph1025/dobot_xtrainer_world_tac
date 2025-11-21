@@ -1,23 +1,21 @@
 #!/bin/bash
 
-# Training script for ACTJEPAAdapter with CLIP (RGB) + V-JEPA (Tactile) + HSA Loss
-# This is the unified model architecture combining:
-# - CLIP ViT encoder for RGB cameras (trainable or frozen)
-# - V-JEPA ViT encoder with adapters for tactile sensors (frozen base, trainable adapters)
-# - Hierarchical Spatial Alignment (HSA) loss for tactile-visual alignment
+# Training script for ACTJEPAAdapter with CLIP + Text Conditioning
+# Task: Peg-in-hole with tactile sensors
 
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 # Task configuration
-TASK="dobot_peginhole_tac_1107"  # Change to your task
-VIT_CKPT="jepa_ckpt/vitl.pt"  # V-JEPA checkpoint for tactile sensors
+TASK="dobot_peginhole_tac_1107"
+VIT_CKPT="jepa_ckpt/vitl_peg_e150.pt"
+TEXT_PROMPT="Insert the peg into the hole carefully"
 
 python ModelTrain/model_train.py \
     --policy_class ACTJEPAAdapter \
     --task_name $TASK \
-    --ckpt_dir ckpt/actjepa_adapter_clip_${TASK} \
+    --ckpt_dir ckpt/actjepa_adapter_clip_text_peg \
     --num_steps 20000 \
     --batch_size 16 \
     --lr 1e-5 \
@@ -37,6 +35,8 @@ python ModelTrain/model_train.py \
     --clip_model ViT-B-16 \
     --clip_pretrained openai \
     --freeze_clip \
+    --enable_text \
+    --text_prompt "$TEXT_PROMPT" \
     --enable_hsa \
     --hsa_weight 1.0 \
     --hsa_temperature 0.07 \
