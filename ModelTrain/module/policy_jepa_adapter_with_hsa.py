@@ -68,19 +68,28 @@ class ACTJEPAHsa(ACTJEPAAdapterPolicy):
         self.hsa_weight = hsa_config.get('hsa_weight', 1.0)
         
         if self.enable_hsa:
-            # Initialize tactile feature extractor
+            # Initialize tactile feature extractor with CLIP encoder from policy
             feature_dim = hsa_config.get('feature_dim', 768)
             img_size = hsa_config.get('img_size', 224)
             patch_size = hsa_config.get('patch_size', 16)
             num_heads = hsa_config.get('num_heads', 12)  # Default 12 for ViT-L (768), use 16 for ViT-G (1408)
             
+            # Get CLIP encoder from policy model if available
+            clip_encoder = getattr(self.model, 'clip_encoder', None) if hasattr(self, 'model') else None
+            
             self.feature_extractor = TactileFeatureExtractor(
+                clip_encoder=clip_encoder,
                 img_size=img_size,
                 patch_size=patch_size,
                 embed_dim=feature_dim,
                 num_heads=num_heads,
                 device='cuda' if torch.cuda.is_available() else 'cpu'
             )
+            
+            if clip_encoder is not None:
+                print("HSA: Using shared CLIP encoder from policy")
+            else:
+                print("HSA: CLIP encoder not found, using legacy custom backbone")
             
             # Initialize HSA loss
             temperature = hsa_config.get('temperature', 0.07)

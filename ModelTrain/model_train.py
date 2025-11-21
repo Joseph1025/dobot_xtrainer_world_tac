@@ -58,6 +58,15 @@ def arg_config():
                         choices=['attention', 'mean'],
                         help='Pooling type for aggregating patch tokens')
     
+    # CLIP Encoder arguments
+    parser.add_argument('--clip_model', action='store', type=str, default='ViT-B-16',
+                        choices=['ViT-B-32', 'ViT-B-16', 'ViT-L-14', 'ViT-H-14'],
+                        help='CLIP model variant for RGB cameras (default: ViT-B-16)')
+    parser.add_argument('--clip_pretrained', action='store', type=str, default='openai',
+                        help='CLIP pretrained weights (default: openai, can also use laion2b_s34b_b88k, etc.)')
+    parser.add_argument('--freeze_clip', action='store_true', default=False,
+                        help='Freeze CLIP encoder weights (default: False, i.e., trainable)')
+    
     # HSA Loss arguments
     parser.add_argument('--enable_hsa', action='store_true', default=False,
                         help='Enable HSA (Hard Sample Aware) loss for tactile-visual alignment')

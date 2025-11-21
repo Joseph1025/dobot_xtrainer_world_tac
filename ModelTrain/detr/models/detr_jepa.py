@@ -33,11 +33,11 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 
 
 class DETRJEPA(nn.Module):
-    """ DETRJEPA: Hybrid ACT model with ResNet backbones for RGB + V-JEPA2 ViT for tactile """
-    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, vq, vq_class, vq_dim, action_dim, vitg_ckpt_path, tactile_camera_names, vit_model='vitg'):
+    """ DETRJEPA: Hybrid ACT model with CLIP for RGB + V-JEPA2 ViT for tactile """
+    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, vq, vq_class, vq_dim, action_dim, vitg_ckpt_path, tactile_camera_names, vit_model='vitg', clip_encoder=None):
         """ Initializes the model.
         Parameters:
-            backbones: torch module list of ResNet backbones for RGB cameras
+            backbones: torch module list of ResNet backbones for RGB cameras (deprecated, use clip_encoder)
             transformer: torch module of the transformer architecture
             encoder: torch module of the VAE encoder
             state_dim: robot state dimension
@@ -48,6 +48,7 @@ class DETRJEPA(nn.Module):
             vitg_ckpt_path: path to V-JEPA2 ViT checkpoint file (.pt)
             tactile_camera_names: list of tactile sensor names
             vit_model: ViT model type ('vitg' or 'vitl')
+            clip_encoder: CLIPEncoder instance for RGB cameras (replaces ResNet backbones)
         """
         super().__init__()
         self.num_queries = num_queries
@@ -63,12 +64,21 @@ class DETRJEPA(nn.Module):
         self.is_pad_head = nn.Linear(hidden_dim, 1)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         
-        # ACTJEPA always uses hybrid architecture: ResNet for RGB + ViT for tactile
-        print(f"ACTJEPA: ResNet for {len(camera_names)} RGB cameras + ViT-{vit_model.upper()} for {len(tactile_camera_names)} tactile sensors")
+        # ACTJEPA uses hybrid architecture: CLIP for RGB + ViT for tactile
+        print(f"ACTJEPA: CLIP for {len(camera_names)} RGB cameras + ViT-{vit_model.upper()} for {len(tactile_camera_names)} tactile sensors")
         
-        # Create ResNet backbones for RGB cameras
-        self.backbones = nn.ModuleList(backbones)
-        self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
+        # Use CLIP encoder for RGB cameras if provided, otherwise fallback to ResNet
+        if clip_encoder is not None:
+            self.clip_encoder = clip_encoder
+            self.backbones = None
+            self.use_clip = True
+            print(f"  - Using CLIP encoder for RGB cameras")
+        else:
+            # Legacy ResNet mode
+            self.backbones = nn.ModuleList(backbones)
+            self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
+            self.use_clip = False
+            print(f"  - Using ResNet backbones for RGB cameras (legacy mode)")
         
         # Create V-JEPA2 ViT encoder for tactile sensors (shared across all tactile sensors)
         from ModelTrain.module.vitg_encoder import ViTGEncoderSimple
@@ -174,7 +184,7 @@ class DETRJEPA(nn.Module):
         """
         latent_input, probs, binaries, mu, logvar = self.encode(qpos, actions, is_pad, vq_sample)
 
-        # ACTJEPA always uses hybrid mode: Process RGB through ResNet + Tactile through ViTG
+        # ACTJEPA hybrid mode: Process RGB through CLIP (or ResNet legacy) + Tactile through ViTG
         bs = qpos.shape[0]
         all_features = []
         all_pos = []
@@ -188,21 +198,32 @@ class DETRJEPA(nn.Module):
             rgb_images = image[:, :len(self.camera_names)]
             tactile_images = image[:, len(self.camera_names):]
         
-        # Process RGB cameras through ResNet
-        for cam_id, cam_name in enumerate(self.camera_names):
-            rgb_image = rgb_images[:, cam_id]
-            features, pos = self.backbones[cam_id](rgb_image)
-            features = features[0]  # take the last layer feature (B, C, H, W)
-            pos = pos[0]
-            
-            # Project and flatten to sequence
-            projected = self.input_proj(features)  # (B, hidden_dim, H, W)
-            projected = projected.flatten(2)  # (B, hidden_dim, H*W) - flatten spatial
-            all_features.append(projected)
-            
-            # Flatten position embeddings
-            pos = pos.flatten(2)  # (1, hidden_dim, H*W)
-            all_pos.append(pos)
+        # Process RGB cameras
+        if self.use_clip:
+            # CLIP mode: Process RGB cameras through CLIP encoder
+            for cam_id, cam_name in enumerate(self.camera_names):
+                rgb_image = rgb_images[:, cam_id]
+                # CLIP encoder returns (features, pos) where features are already projected
+                # Shape: features (B, hidden_dim, num_patches), pos (B, hidden_dim, num_patches)
+                features, pos = self.clip_encoder(rgb_image)
+                all_features.append(features)
+                all_pos.append(pos[:1])  # Use first batch item for pos (shared across batch)
+        else:
+            # Legacy ResNet mode
+            for cam_id, cam_name in enumerate(self.camera_names):
+                rgb_image = rgb_images[:, cam_id]
+                features, pos = self.backbones[cam_id](rgb_image)
+                features = features[0]  # take the last layer feature (B, C, H, W)
+                pos = pos[0]
+                
+                # Project and flatten to sequence
+                projected = self.input_proj(features)  # (B, hidden_dim, H, W)
+                projected = projected.flatten(2)  # (B, hidden_dim, H*W) - flatten spatial
+                all_features.append(projected)
+                
+                # Flatten position embeddings
+                pos = pos.flatten(2)  # (1, hidden_dim, H*W)
+                all_pos.append(pos)
         
         # Process tactile sensors through ViTG (shared encoder)
         for tac_id, tac_name in enumerate(self.tactile_camera_names):
@@ -261,7 +282,7 @@ def build_encoder(args):
 
 
 def build_jepa(args):
-    """Build ACTJEPA model with hybrid ResNet+ViTG architecture"""
+    """Build ACTJEPA model with hybrid CLIP+ViTG architecture"""
     state_dim = 14 # TODO hardcode
 
     # ACTJEPA always requires both RGB and tactile cameras
@@ -273,20 +294,39 @@ def build_jepa(args):
     if not tactile_camera_names:
         raise ValueError("ACTJEPA requires tactile_camera_names to be specified")
     
-    # Build ResNet backbones for RGB cameras only (not tactile)
-    backbones = []
-    for cam_name in args.camera_names:
-        if cam_name not in tactile_camera_names:
-            backbone = build_backbone(args)
-            backbones.append(backbone)
+    # Create CLIP encoder for RGB cameras if specified, otherwise use ResNet
+    clip_encoder = None
+    backbones = None
     
-    if len(backbones) == 0:
-        raise ValueError("ACTJEPA requires at least one RGB camera")
+    if hasattr(args, 'clip_model') and args.clip_model:
+        # Create CLIP encoder for RGB cameras
+        from ModelTrain.module.clip_encoder import create_clip_encoder
+        print(f"Creating CLIP encoder: {args.clip_model}")
+        clip_encoder = create_clip_encoder(
+            model_name=args.clip_model,
+            pretrained=getattr(args, 'clip_pretrained', 'openai'),
+            hidden_dim=args.hidden_dim,
+            freeze=getattr(args, 'freeze_clip', False),
+            image_size=224  # CLIP default
+        )
+    else:
+        # Legacy: Build ResNet backbones for RGB cameras only (not tactile)
+        backbones = []
+        for cam_name in args.camera_names:
+            if cam_name not in tactile_camera_names:
+                backbone = build_backbone(args)
+                backbones.append(backbone)
+        
+        if len(backbones) == 0:
+            raise ValueError("ACTJEPA requires at least one RGB camera")
     
     # Get ViT model type from args
     vit_model = getattr(args, 'vit_model', 'vitg')
     
-    print(f"Building ACTJEPA: {len(backbones)} ResNet backbones + {len(tactile_camera_names)} ViT-{vit_model.upper()} encoders")
+    if clip_encoder:
+        print(f"Building ACTJEPA: CLIP encoder + {len(tactile_camera_names)} ViT-{vit_model.upper()} encoders")
+    else:
+        print(f"Building ACTJEPA: {len(backbones)} ResNet backbones + {len(tactile_camera_names)} ViT-{vit_model.upper()} encoders")
 
     transformer = build_transformer(args)
 
@@ -309,6 +349,7 @@ def build_jepa(args):
         vitg_ckpt_path=vitg_ckpt_path,
         tactile_camera_names=tactile_camera_names,
         vit_model=vit_model,
+        clip_encoder=clip_encoder,
     )
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

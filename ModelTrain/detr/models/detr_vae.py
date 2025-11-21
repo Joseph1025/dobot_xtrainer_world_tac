@@ -34,15 +34,16 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 
 class DETRVAE(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, vq, vq_class, vq_dim, action_dim):
+    def __init__(self, backbones, transformer, encoder, state_dim, num_queries, camera_names, vq, vq_class, vq_dim, action_dim, clip_encoder=None):
         """ Initializes the model.
         Parameters:
-            backbones: torch module of the backbone to be used. See backbone.py
+            backbones: torch module of the backbone to be used. See backbone.py (deprecated, use clip_encoder instead)
             transformer: torch module of the transformer architecture. See transformer.py
             state_dim: robot state dimension of the environment
             num_queries: number of object queries, ie detection slot. This is the maximal number of objects
                          DETR can detect in a single image. For COCO, we recommend 100 queries.
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
+            clip_encoder: CLIPEncoder instance for RGB cameras (replaces ResNet backbones)
         """
         super().__init__()
         self.num_queries = num_queries
@@ -56,10 +57,20 @@ class DETRVAE(nn.Module):
         self.is_pad_head = nn.Linear(hidden_dim, 1)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         
-        if backbones is not None:
-            # Pure ResNet mode (RGB only)
+        # Use CLIP encoder if provided, otherwise fallback to ResNet (for backward compatibility)
+        if clip_encoder is not None:
+            # CLIP mode (RGB cameras through CLIP)
+            print(f"ACT: Using CLIP encoder for {len(camera_names)} RGB cameras")
+            self.clip_encoder = clip_encoder
+            self.backbones = None
+            self.use_clip = True
+            self.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)
+        elif backbones is not None:
+            # Legacy ResNet mode (RGB only)
+            print(f"ACT: Using ResNet backbones for {len(camera_names)} RGB cameras (legacy mode)")
             self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
             self.backbones = nn.ModuleList(backbones)
+            self.use_clip = False
             self.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)
         else:
             # No visual input
@@ -67,6 +78,7 @@ class DETRVAE(nn.Module):
             self.input_proj_env_state = nn.Linear(7, hidden_dim)
             self.pos = torch.nn.Embedding(2, hidden_dim)
             self.backbones = None
+            self.use_clip = False
 
         # encoder extra parameters
         self.latent_dim = 32 # final size of latent z # TODO tune
@@ -155,8 +167,35 @@ class DETRVAE(nn.Module):
         latent_input, probs, binaries, mu, logvar = self.encode(qpos, actions, is_pad, vq_sample)
 
         # cvae decoder
-        if self.backbones is not None:
-            # Pure ResNet mode: Image observation features and position embeddings
+        if self.use_clip:
+            # CLIP mode: Process all RGB cameras through CLIP
+            all_cam_features = []
+            all_cam_pos = []
+            for cam_id, cam_name in enumerate(self.camera_names):
+                # CLIP encoder returns (features, pos) where features are already projected to hidden_dim
+                # Shape: features (B, hidden_dim, num_patches), pos (B, hidden_dim, num_patches)
+                features, pos = self.clip_encoder(image[:, cam_id])
+                all_cam_features.append(features)
+                all_cam_pos.append(pos[:1])  # Use first batch item for pos (shared across batch)
+            
+            # proprioception features
+            proprio_input = self.input_proj_robot_state(qpos)
+            
+            # Concatenate all camera features along sequence dimension
+            # Each camera contributes num_patches tokens
+            # Need to reshape to 4D for transformer: (B, C, H, W)
+            # Treat concatenated sequence as width dimension: (B, hidden_dim, 1, total_seq_len)
+            src = torch.cat(all_cam_features, dim=2)  # (B, hidden_dim, total_num_patches)
+            pos = torch.cat(all_cam_pos, dim=2)  # (1, hidden_dim, total_num_patches)
+            
+            # Reshape to 4D (transformer expects this)
+            src = src.unsqueeze(2)  # (B, hidden_dim, 1, total_num_patches)
+            pos = pos.unsqueeze(2)  # (1, hidden_dim, 1, total_num_patches)
+            
+            hs = self.transformer(src, None, self.query_embed.weight, pos, latent_input, proprio_input, self.additional_pos_embed.weight)[0]
+            
+        elif self.backbones is not None:
+            # Legacy ResNet mode: Image observation features and position embeddings
             all_cam_features = []
             all_cam_pos = []
             for cam_id, cam_name in enumerate(self.camera_names):
@@ -272,13 +311,27 @@ def build_encoder(args):
 def build(args):
     state_dim = 14 # TODO hardcode
 
-    # From state
-    # backbone = None # from state for now, no need for conv nets
-    # From image
-    backbones = []
-    for _ in args.camera_names:
-        backbone = build_backbone(args)
-        backbones.append(backbone)
+    # Create CLIP encoder if specified, otherwise use ResNet backbones
+    clip_encoder = None
+    backbones = None
+    
+    if hasattr(args, 'clip_model') and args.clip_model:
+        # Create CLIP encoder for RGB cameras
+        from ModelTrain.module.clip_encoder import create_clip_encoder
+        print(f"Creating CLIP encoder: {args.clip_model}")
+        clip_encoder = create_clip_encoder(
+            model_name=args.clip_model,
+            pretrained=getattr(args, 'clip_pretrained', 'openai'),
+            hidden_dim=args.hidden_dim,
+            freeze=getattr(args, 'freeze_clip', False),
+            image_size=224  # CLIP default
+        )
+    else:
+        # Legacy ResNet backbones
+        backbones = []
+        for _ in args.camera_names:
+            backbone = build_backbone(args)
+            backbones.append(backbone)
 
     transformer = build_transformer(args)
 
@@ -299,6 +352,7 @@ def build(args):
         vq_class=args.vq_class,
         vq_dim=args.vq_dim,
         action_dim=args.action_dim,
+        clip_encoder=clip_encoder,
     )
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

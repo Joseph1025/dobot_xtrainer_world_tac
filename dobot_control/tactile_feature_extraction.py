@@ -45,7 +45,9 @@ except ImportError:
 class CLIPLikeBackbone(nn.Module if TORCH_AVAILABLE else object):
     """
     A CLIP-like vision backbone for extracting intermediate features.
-    Uses a Vision Transformer (ViT) architecture similar to CLIP.
+    
+    DEPRECATED: This custom implementation is being replaced by actual CLIP from open_clip.
+    Kept for backward compatibility only.
     """
     
     def __init__(self, 
@@ -59,6 +61,7 @@ class CLIPLikeBackbone(nn.Module if TORCH_AVAILABLE else object):
         if not TORCH_AVAILABLE:
             raise ImportError("PyTorch is required for CLIPLikeBackbone")
         super().__init__()
+        print("WARNING: CLIPLikeBackbone is deprecated. Use open_clip CLIP encoder instead.")
         self.img_size = img_size
         self.patch_size = patch_size
         self.embed_dim = embed_dim
@@ -356,10 +359,11 @@ class CameraProjection:
 
 
 class TactileFeatureExtractor:
-    """Main class for extracting tactile and visual features."""
+    """Main class for extracting tactile and visual features using external CLIP encoder."""
     
     def __init__(self,
-                 img_size: int = 640,
+                 clip_encoder=None,
+                 img_size: int = 224,
                  patch_size: int = 16,
                  embed_dim: int = 768,
                  num_heads: int = 12,
@@ -368,6 +372,7 @@ class TactileFeatureExtractor:
         Initialize the feature extractor.
         
         Args:
+            clip_encoder: External CLIP encoder from policy (preferred). If None, creates legacy CLIPLikeBackbone.
             img_size: Input image size (will be resized to this)
             patch_size: Patch size for Vision Transformer
             embed_dim: Embedding dimension
@@ -380,13 +385,29 @@ class TactileFeatureExtractor:
         self.img_size = img_size
         self.patch_size = patch_size
         
-        # Initialize vision backbone
-        self.backbone = CLIPLikeBackbone(
-            img_size=img_size,
-            patch_size=patch_size,
-            embed_dim=embed_dim,
-            num_heads=num_heads
-        ).to(self.device)
+        # Use external CLIP encoder if provided
+        if clip_encoder is not None:
+            print("TactileFeatureExtractor: Using external CLIP encoder from policy")
+            self.backbone = clip_encoder
+            self.use_external_clip = True
+            # Get feature grid shape from CLIP encoder
+            if hasattr(clip_encoder, 'num_patches_per_side'):
+                self.feature_grid_shape = (clip_encoder.num_patches_per_side, clip_encoder.num_patches_per_side)
+            else:
+                # Default for CLIP ViT-B/16
+                self.feature_grid_shape = (img_size // patch_size, img_size // patch_size)
+        else:
+            # Fallback to legacy custom backbone (deprecated)
+            print("TactileFeatureExtractor: Using legacy CLIPLikeBackbone (deprecated)")
+            self.backbone = CLIPLikeBackbone(
+                img_size=img_size,
+                patch_size=patch_size,
+                embed_dim=embed_dim,
+                num_heads=num_heads
+            ).to(self.device)
+            self.use_external_clip = False
+            self.feature_grid_shape = self.backbone.get_feature_grid_shape()
+        
         # Note: backbone starts in training mode by default
         # Policy will control train/eval mode during training/inference
         
@@ -396,8 +417,6 @@ class TactileFeatureExtractor:
             transforms.Resize((img_size, img_size)),
             transforms.ToTensor(),
         ])
-        
-        self.feature_grid_shape = self.backbone.get_feature_grid_shape()
         
         # Gripper-aware offset configuration (calibrated from real robot)
         # NOTE: Requires real camera intrinsic matrix (K) to be provided during feature extraction
@@ -472,7 +491,14 @@ class TactileFeatureExtractor:
         img_tensor = self.transform(wrist_image).unsqueeze(0).to(self.device)
         
         # Extract features (gradients enabled for training)
-        features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
+        if self.use_external_clip:
+            # External CLIP encoder returns (features, pos)
+            # features: (1, hidden_dim, N_patches), need to transpose
+            features, _ = self.backbone(img_tensor)
+            features = features.permute(0, 2, 1)  # (1, N_patches, hidden_dim)
+        else:
+            # Legacy backbone returns features directly
+            features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
         
         # Compute gripper-based offset if enabled
         if self.use_gripper_offset and gripper_width is not None and camera_K is not None:
@@ -567,7 +593,13 @@ class TactileFeatureExtractor:
         img_tensor = self.transform(tp_image).unsqueeze(0).to(self.device)
         
         # Extract features (gradients enabled for training)
-        features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
+        if self.use_external_clip:
+            # External CLIP encoder returns (features, pos)
+            features, _ = self.backbone(img_tensor)
+            features = features.permute(0, 2, 1)  # (1, N_patches, hidden_dim)
+        else:
+            # Legacy backbone returns features directly
+            features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
         
         # Map bounding box to feature grid
         orig_h, orig_w = tp_image.shape[:2]
@@ -625,7 +657,13 @@ class TactileFeatureExtractor:
         img_tensor = self.transform(tactile_image).unsqueeze(0).to(self.device)
         
         # Extract features (gradients enabled for training)
-        features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
+        if self.use_external_clip:
+            # External CLIP encoder returns (features, pos)
+            features, _ = self.backbone(img_tensor)
+            features = features.permute(0, 2, 1)  # (1, N_patches, hidden_dim)
+        else:
+            # Legacy backbone returns features directly
+            features = self.backbone(img_tensor)  # (1, N_patches, embed_dim)
         
         # Mean pool over all tokens
         h_tau = features.mean(dim=1).squeeze(0)  # (embed_dim,)

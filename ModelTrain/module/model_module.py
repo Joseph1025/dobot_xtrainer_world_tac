@@ -69,7 +69,10 @@ def set_config():
          'action_dim':16, 
          'no_encoder':args["no_encoder"],
          'use_vitg':args.get("use_vitg", False),
-         'vitg_ckpt_path':args.get("vitg_ckpt_path", None) or args.get("vit_ckpt_path", None)}
+         'vitg_ckpt_path':args.get("vitg_ckpt_path", None) or args.get("vit_ckpt_path", None),
+         'clip_model':args.get("clip_model", None),
+         'clip_pretrained':args.get("clip_pretrained", "openai"),
+         'freeze_clip':args.get("freeze_clip", False)}
     elif policy_class == "ACTJEPA":
         enc_layers = 4
         dec_layers = 7
@@ -93,7 +96,10 @@ def set_config():
          'no_encoder':args["no_encoder"],
          'use_vitg':True,
          'vitg_ckpt_path':vit_ckpt,
-         'vit_model':args.get("vit_model", "vitg")}
+         'vit_model':args.get("vit_model", "vitg"),
+         'clip_model':args.get("clip_model", None),
+         'clip_pretrained':args.get("clip_pretrained", "openai"),
+         'freeze_clip':args.get("freeze_clip", False)}
     elif policy_class == "ACTJEPAAdapter":
         enc_layers = 4
         dec_layers = 7
