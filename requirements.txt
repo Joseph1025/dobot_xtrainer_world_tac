@@ -1,4 +1,3 @@
-# keep in alphabetical order
 dm_control
 Pillow
 pygame
@@ -25,3 +24,7 @@ huggingface_hub==0.25.2
 click
 timm
 open_clip_torch>=2.20.0
+torch
+torchvision
+numpy
+tqdm
