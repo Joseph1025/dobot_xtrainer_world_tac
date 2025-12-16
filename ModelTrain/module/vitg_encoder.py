@@ -13,7 +13,7 @@ from typing import Optional
 # Try to import V-JEPA2 model architecture (local copy for Python 3.8 compatibility)
 try:
     # Use local vjepa2_compat directory (Python 3.8 compatible)
-    from ModelTrain.vjepa2_compat.model_builder import create_vit_giant, create_vit_large, load_vjepa2_weights
+    from ModelTrain.vjepa2_compat.model_builder import create_vit_giant, create_vit_large, create_vit_huge, load_vjepa2_weights
     VJEPA_AVAILABLE = True
 except ImportError as e:
     VJEPA_AVAILABLE = False
@@ -178,7 +178,7 @@ class ViTGEncoderSimple(nn.Module):
     """
     V-JEPA2 ViT encoder wrapper for tactile image processing.
     Loads V-JEPA2 checkpoint and creates frozen encoder.
-    Supports both ViT-Giant (1408-dim) and ViT-Large (1024-dim).
+    Supports ViT-Giant (1408-dim), ViT-Huge (1280-dim), and ViT-Large (1024-dim).
     """
     
     def __init__(self, ckpt_path: str, embed_dim: int = None, input_size: int = 224, model_type: str = 'vitg'):
@@ -193,8 +193,10 @@ class ViTGEncoderSimple(nn.Module):
                 self.embed_dim = 1408
             elif model_type == 'vitl':
                 self.embed_dim = 1024
+            elif model_type == 'vith':
+                self.embed_dim = 1280
             else:
-                raise ValueError(f"Unknown model_type: {model_type}. Choose 'vitg' or 'vitl'")
+                raise ValueError(f"Unknown model_type: {model_type}. Choose 'vitg', 'vitl', or 'vith'")
         else:
             self.embed_dim = embed_dim
         
@@ -237,8 +239,15 @@ class ViTGEncoderSimple(nn.Module):
                     num_frames=2,  # Match checkpoint (will duplicate frames for static images)
                     tubelet_size=2,  # Match checkpoint architecture
                 )
+            elif model_type == 'vith':
+                self.encoder = create_vit_huge(
+                    img_size=input_size,
+                    patch_size=16,
+                    num_frames=2,  # Match checkpoint (will duplicate frames for static images)
+                    tubelet_size=2,  # Match checkpoint architecture
+                )
             else:
-                raise ValueError(f"Unknown model_type: {model_type}. Choose 'vitg' or 'vitl'")
+                raise ValueError(f"Unknown model_type: {model_type}. Choose 'vitg', 'vitl', or 'vith'")
             
             # Load weights using helper function
             use_target = 'target_encoder' in checkpoint

@@ -66,6 +66,36 @@ def create_vit_large(img_size=224, patch_size=16, num_frames=2, tubelet_size=2):
     return model
 
 
+def create_vit_huge(img_size=224, patch_size=16, num_frames=2, tubelet_size=2):
+    """
+    Create a ViT-Huge model compatible with V-JEPA2 checkpoints.
+    
+    Args:
+        img_size: Input image size
+        patch_size: Patch size for ViT
+        num_frames: Number of frames (must match checkpoint, typically 2 or 64)
+        tubelet_size: Temporal patch size (must match checkpoint, typically 2)
+    
+    Returns:
+        ViT-Huge model (1280-dim embeddings)
+    
+    Note: Even for static images, we use num_frames=2 and tubelet_size=2 to match
+    the checkpoint architecture. We'll duplicate the image frame during inference.
+    """
+    from . import vision_transformer
+    
+    # ViT-Huge with RoPE
+    # Use tubelet_size=2 to match checkpoint weights
+    model = vision_transformer.vit_huge_rope(
+        patch_size=patch_size,
+        img_size=(img_size, img_size),
+        num_frames=num_frames,
+        tubelet_size=tubelet_size,
+    )
+    
+    return model
+
+
 def load_vjepa2_weights(model, checkpoint_path, use_target_encoder=True):
     """
     Load V-JEPA2 weights into model.

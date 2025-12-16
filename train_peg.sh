@@ -9,13 +9,13 @@ cd "$SCRIPT_DIR"
 
 # Task configuration
 TASK="dobot_peginhole_tac_1107"
-VIT_CKPT="jepa_ckpt/vitl_peg_e150.pt"
+VIT_CKPT="jepa_ckpt/vith_peg.pt"
 TEXT_PROMPT="Insert the peg into the hole carefully"
 
 python ModelTrain/model_train.py \
     --policy_class ACTJEPAAdapter \
     --task_name $TASK \
-    --ckpt_dir ckpt/actjepa_adapter_clip_text_peg \
+    --ckpt_dir ckpt/actjepahsa_vith_peg \
     --num_steps 20000 \
     --batch_size 16 \
     --lr 1e-5 \
@@ -26,7 +26,7 @@ python ModelTrain/model_train.py \
     --validate_every 100 \
     --save_every 5000 \
     --vit_ckpt_path $VIT_CKPT \
-    --vit_model vitl \
+    --vit_model vith \
     --adapter_hidden_dim 512 \
     --adapter_depth 3 \
     --adapter_dropout 0.1 \
